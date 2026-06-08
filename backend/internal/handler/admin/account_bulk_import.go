@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,8 +16,9 @@ import (
 )
 
 const (
-	accountBulkImportMaxItems = 1000
-	accountBulkImportJobTTL   = 24 * time.Hour
+	accountBulkImportMaxItems          = 1000
+	accountBulkImportJobTTL            = 24 * time.Hour
+	accountBulkImportValidationTimeout = 75 * time.Second
 )
 
 type AccountBulkImportItem struct {
@@ -36,6 +38,7 @@ type AccountBulkImportResult struct {
 	Type      string `json:"type,omitempty"`
 	AccountID int64  `json:"account_id,omitempty"`
 	Success   bool   `json:"success"`
+	Warning   string `json:"warning,omitempty"`
 	Error     string `json:"error,omitempty"`
 }
 
@@ -254,10 +257,65 @@ func (h *AccountHandler) createAccountFromBulkImportItem(ctx context.Context, it
 		return result
 	}
 
+	if err := h.validateBulkImportedAccount(ctx, account); err != nil {
+		if disableErr := h.disableInvalidAccount(ctx, account.ID, err); disableErr != nil {
+			result.AccountID = account.ID
+			result.Error = fmt.Sprintf("%s; failed to disable imported account: %v", err.Error(), disableErr)
+			return result
+		}
+		result.Success = true
+		result.AccountID = account.ID
+		result.Warning = fmt.Sprintf("%s; account imported as disabled", err.Error())
+		return result
+	}
+
 	h.scheduleOpenAIResponsesProbe(account)
 	result.Success = true
 	result.AccountID = account.ID
 	return result
+}
+
+func (h *AccountHandler) disableInvalidAccount(ctx context.Context, accountID int64, validationErr error) error {
+	if h.adminService == nil {
+		return errors.New("admin service is not configured")
+	}
+	if _, err := h.adminService.UpdateAccount(ctx, accountID, &service.UpdateAccountInput{Status: service.StatusDisabled}); err != nil {
+		return err
+	}
+	_, _ = h.adminService.SetAccountSchedulable(ctx, accountID, false)
+	if validationErr != nil {
+		_ = h.adminService.SetAccountError(ctx, accountID, validationErr.Error())
+	}
+	return nil
+}
+
+func (h *AccountHandler) validateBulkImportedAccount(ctx context.Context, account *service.Account) error {
+	if account == nil {
+		return errors.New("account validation failed: created account is empty")
+	}
+	if h.accountTestService == nil {
+		return errors.New("account validation failed: account test service is not configured")
+	}
+
+	testCtx, cancel := context.WithTimeout(ctx, accountBulkImportValidationTimeout)
+	defer cancel()
+
+	testResult, err := h.accountTestService.RunTestBackground(testCtx, account.ID, "")
+	if err != nil {
+		return fmt.Errorf("account validation failed: %w", err)
+	}
+	if testResult == nil {
+		return errors.New("account validation failed: empty test result")
+	}
+	if strings.EqualFold(testResult.Status, "success") {
+		return nil
+	}
+
+	message := strings.TrimSpace(testResult.ErrorMessage)
+	if message == "" {
+		message = "test did not complete successfully"
+	}
+	return fmt.Errorf("account validation failed: %s", message)
 }
 
 func buildAccountBulkImportCreateConfig(item AccountBulkImportItem) (platform string, accountType string, credentials map[string]any, defaultPrefix string, err error) {

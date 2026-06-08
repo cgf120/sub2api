@@ -188,6 +188,8 @@
           @clear="clearSelection"
           @select-page="selectPage"
           @toggle-schedulable="handleBulkToggleSchedulable"
+          @test-selected="handleBulkTest"
+          :testing="batchTestRunning"
         />
         <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
         <DataTable
@@ -391,6 +393,59 @@
     />
     <TempUnschedStatusModal :show="showTempUnsched" :account="tempUnschedAcc" @close="showTempUnsched = false" @reset="handleTempUnschedReset" />
     <ConfirmDialog :show="showDeleteDialog" :title="t('admin.accounts.deleteAccount')" :message="t('admin.accounts.deleteConfirm', { name: deletingAcc?.name })" :confirm-text="t('common.delete')" :cancel-text="t('common.cancel')" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
+    <BaseDialog
+      :show="showBatchTest"
+      title="批量测试账号"
+      width="wide"
+      :close-on-click-outside="false"
+      @close="closeBatchTestDialog"
+    >
+      <div class="space-y-4">
+        <div v-if="batchTestJob" class="space-y-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-dark-600">
+          <div class="flex items-center justify-between text-sm">
+            <div class="font-medium text-gray-900 dark:text-white">测试进度</div>
+            <div class="text-gray-500 dark:text-gray-400">{{ batchTestJob.processed }} / {{ batchTestJob.total }}</div>
+          </div>
+          <div class="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
+            <div class="h-full rounded-full bg-primary-500 transition-all" :style="{ width: `${batchTestProgressPercent}%` }"></div>
+          </div>
+          <div class="flex flex-wrap gap-3 text-xs text-gray-500 dark:text-gray-400">
+            <span>状态：{{ batchTestStatusLabel }}</span>
+            <span>成功：{{ batchTestJob.success }}</span>
+            <span>失败：{{ batchTestJob.failed }}</span>
+          </div>
+          <div v-if="batchTestJob.error" class="rounded bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
+            {{ batchTestJob.error }}
+          </div>
+        </div>
+
+        <div v-if="batchTestJob?.results.length" class="rounded-lg border border-gray-200 dark:border-dark-600">
+          <div class="border-b border-gray-200 px-4 py-3 text-sm font-medium text-gray-900 dark:border-dark-600 dark:text-white">
+            测试明细
+          </div>
+          <div class="max-h-80 overflow-y-auto divide-y divide-gray-100 dark:divide-dark-700">
+            <div
+              v-for="item in batchTestJob.results"
+              :key="item.account_id"
+              class="grid grid-cols-[minmax(8rem,1fr)_5rem_minmax(0,2fr)] gap-3 px-4 py-2 text-xs"
+            >
+              <span class="truncate text-gray-700 dark:text-gray-200" :title="item.name || String(item.account_id)">
+                {{ item.name || `#${item.account_id}` }}
+              </span>
+              <span :class="item.success ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'">
+                {{ item.success ? '成功' : '失败' }}
+              </span>
+              <span class="truncate text-gray-500 dark:text-gray-400" :title="item.error || item.response_text || ''">
+                {{ item.error || item.response_text || (item.latency_ms ? `${item.latency_ms}ms` : '-') }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="btn btn-secondary" :disabled="batchTestRunning" @click="closeBatchTestDialog">关闭</button>
+      </template>
+    </BaseDialog>
     <ConfirmDialog :show="showExportDataDialog" :title="t('admin.accounts.dataExport')" :message="t('admin.accounts.dataExportConfirmMessage')" :confirm-text="t('admin.accounts.dataExportConfirm')" :cancel-text="t('common.cancel')" @confirm="handleExportData" @cancel="showExportDataDialog = false">
       <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
         <input type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" v-model="includeProxyOnExport" />
@@ -417,6 +472,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Pagination from '@/components/common/Pagination.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { AccountBulkImportModal, CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrsModal, TempUnschedStatusModal } from '@/components/account'
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
@@ -441,7 +497,7 @@ import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfil
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
-import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel } from '@/types'
+import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, AccountBatchTestJob } from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -501,6 +557,7 @@ const showBulkEdit = ref(false)
 const bulkEditTarget = ref<AccountBulkEditTarget | null>(null)
 const showTempUnsched = ref(false)
 const showDeleteDialog = ref(false)
+const showBatchTest = ref(false)
 const showReAuth = ref(false)
 const showTest = ref(false)
 const showStats = ref(false)
@@ -518,6 +575,28 @@ const scheduleModelOptions = ref<SelectOption[]>([])
 const togglingSchedulable = ref<number | null>(null)
 const menu = reactive<{show:boolean, acc:Account|null, pos:{top:number, left:number}|null}>({ show: false, acc: null, pos: null })
 const exportingData = ref(false)
+const batchTestJob = ref<AccountBatchTestJob | null>(null)
+const batchTestCompletionNotified = ref(false)
+let batchTestPollTimer: ReturnType<typeof setInterval> | null = null
+const batchTestRunning = computed(() => batchTestJob.value?.status === 'pending' || batchTestJob.value?.status === 'running')
+const batchTestProgressPercent = computed(() => {
+  if (!batchTestJob.value || batchTestJob.value.total <= 0) return 0
+  return Math.min(100, Math.round((batchTestJob.value.processed / batchTestJob.value.total) * 100))
+})
+const batchTestStatusLabel = computed(() => {
+  switch (batchTestJob.value?.status) {
+    case 'pending':
+      return '等待中'
+    case 'running':
+      return '进行中'
+    case 'completed':
+      return '已完成'
+    case 'failed':
+      return '任务失败'
+    default:
+      return '-'
+  }
+})
 
 // Account tools dropdown
 const showAccountToolsDropdown = ref(false)
@@ -880,6 +959,7 @@ const isAnyModalOpen = computed(() => {
     showBulkEdit.value ||
     showTempUnsched.value ||
     showDeleteDialog.value ||
+    showBatchTest.value ||
     showReAuth.value ||
     showTest.value ||
     showStats.value ||
@@ -1273,6 +1353,92 @@ const handleBulkRefreshToken = async () => {
     console.error('Failed to bulk refresh token:', error)
     appStore.showError(String(error))
   }
+}
+const stopBatchTestPolling = () => {
+  if (batchTestPollTimer) {
+    clearInterval(batchTestPollTimer)
+    batchTestPollTimer = null
+  }
+}
+const notifyBatchTestCompletion = () => {
+  if (!batchTestJob.value || batchTestCompletionNotified.value) return
+  batchTestCompletionNotified.value = true
+  if (batchTestJob.value.failed > 0) {
+    appStore.showWarning(`批量测试完成：成功 ${batchTestJob.value.success}，失败 ${batchTestJob.value.failed}`)
+  } else {
+    appStore.showSuccess(`批量测试完成：成功 ${batchTestJob.value.success}`)
+  }
+  load().catch((error) => {
+    console.error('Failed to refresh accounts after batch test:', error)
+  })
+}
+const pollBatchTestJob = async () => {
+  if (!batchTestJob.value?.id) return
+  try {
+    batchTestJob.value = await adminAPI.accounts.getBatchTestJob(batchTestJob.value.id)
+    if (batchTestJob.value.status === 'completed' || batchTestJob.value.status === 'failed') {
+      stopBatchTestPolling()
+      notifyBatchTestCompletion()
+    }
+  } catch (error: any) {
+    stopBatchTestPolling()
+    appStore.showError(error?.response?.data?.message || error?.message || '获取批量测试进度失败')
+  }
+}
+const startBatchTestPolling = () => {
+  stopBatchTestPolling()
+  batchTestPollTimer = setInterval(pollBatchTestJob, 1000)
+  void pollBatchTestJob()
+}
+const createPendingBatchTestJob = (total: number): AccountBatchTestJob => {
+  const now = Math.floor(Date.now() / 1000)
+  return {
+    id: '',
+    status: 'pending',
+    total,
+    processed: 0,
+    success: 0,
+    failed: 0,
+    results: [],
+    created_at: now,
+    updated_at: now
+  }
+}
+const handleBulkTest = async () => {
+  const accountIds = [...selIds.value]
+  if (accountIds.length === 0 || batchTestRunning.value) return
+  if (!confirm('批量测试会对选中的账号发起真实请求，是否继续？')) return
+  try {
+    stopBatchTestPolling()
+    batchTestCompletionNotified.value = false
+    batchTestJob.value = createPendingBatchTestJob(accountIds.length)
+    showBatchTest.value = true
+    batchTestJob.value = await adminAPI.accounts.startBatchTest(accountIds)
+    startBatchTestPolling()
+  } catch (error: any) {
+    console.error('Failed to start batch account test:', error)
+    const message = error?.response?.data?.message || error?.message || '启动批量测试失败'
+    if (batchTestJob.value) {
+      batchTestJob.value = {
+        ...batchTestJob.value,
+        status: 'failed',
+        error: message,
+        updated_at: Math.floor(Date.now() / 1000),
+        finished_at: Math.floor(Date.now() / 1000)
+      }
+    }
+    appStore.showError(message)
+  }
+}
+const closeBatchTestDialog = () => {
+  if (batchTestRunning.value) {
+    appStore.showWarning('批量测试进行中，请等待完成')
+    return
+  }
+  stopBatchTestPolling()
+  showBatchTest.value = false
+  batchTestJob.value = null
+  batchTestCompletionNotified.value = false
 }
 const updateSchedulableInList = (accountIds: number[], schedulable: boolean) => {
   if (accountIds.length === 0) return
@@ -1720,6 +1886,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  stopBatchTestPolling()
   window.removeEventListener('scroll', handleScroll, true)
   document.removeEventListener('click', handleClickOutside)
 })

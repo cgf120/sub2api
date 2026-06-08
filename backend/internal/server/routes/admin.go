@@ -284,6 +284,8 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		accounts.POST("/import/codex-session", h.Admin.Account.ImportCodexSession)
 		accounts.POST("/bulk-import", h.Admin.Account.StartBulkImport)
 		accounts.GET("/bulk-import/:job_id", h.Admin.Account.GetBulkImportJob)
+		accounts.POST("/batch-test", h.Admin.Account.StartBatchTest)
+		accounts.GET("/batch-test/:job_id", h.Admin.Account.GetBatchTestJob)
 		accounts.POST("/sync/crs", h.Admin.Account.SyncFromCRS)
 		accounts.POST("/sync/crs/preview", h.Admin.Account.PreviewFromCRS)
 		accounts.POST("/today-stats/batch", h.Admin.Account.GetBatchTodayStats)

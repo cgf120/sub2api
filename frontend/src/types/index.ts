@@ -1052,6 +1052,7 @@ export interface AccountBulkImportResult {
   type?: string
   account_id?: number
   success: boolean
+  warning?: string
   error?: string
 }
 
@@ -1065,6 +1066,31 @@ export interface AccountBulkImportJob {
   success: number
   failed: number
   results: AccountBulkImportResult[]
+  error?: string
+  created_at: number
+  updated_at: number
+  finished_at?: number
+}
+
+export interface AccountBatchTestResult {
+  account_id: number
+  name?: string
+  success: boolean
+  error?: string
+  response_text?: string
+  latency_ms?: number
+}
+
+export type AccountBatchTestJobStatus = 'pending' | 'running' | 'completed' | 'failed'
+
+export interface AccountBatchTestJob {
+  id: string
+  status: AccountBatchTestJobStatus
+  total: number
+  processed: number
+  success: number
+  failed: number
+  results: AccountBatchTestResult[]
   error?: string
   created_at: number
   updated_at: number

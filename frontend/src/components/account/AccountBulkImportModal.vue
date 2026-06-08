@@ -74,9 +74,26 @@
           <span>状态：{{ statusLabel }}</span>
           <span>成功：{{ job.success }}</span>
           <span>失败：{{ job.failed }}</span>
+          <span v-if="warningResults.length > 0">提示：{{ warningResults.length }}</span>
         </div>
         <div v-if="job.error" class="rounded bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
           {{ job.error }}
+        </div>
+      </div>
+
+      <div v-if="warningResults.length > 0" class="rounded-lg border border-gray-200 dark:border-dark-600">
+        <div class="border-b border-gray-200 px-4 py-3 text-sm font-medium text-gray-900 dark:border-dark-600 dark:text-white">
+          提示明细
+        </div>
+        <div class="max-h-48 overflow-y-auto divide-y divide-gray-100 dark:divide-dark-700">
+          <div
+            v-for="item in warningResults.slice(0, 20)"
+            :key="`${item.row_number}-${item.warning}`"
+            class="grid grid-cols-[5rem_1fr] gap-3 px-4 py-2 text-xs"
+          >
+            <span class="text-gray-500 dark:text-gray-400">第 {{ item.row_number }} 行</span>
+            <span class="text-amber-700 dark:text-amber-300">{{ item.warning }}</span>
+          </div>
         </div>
       </div>
 
@@ -161,6 +178,7 @@ const statusLabel = computed(() => {
   }
 })
 const failedResults = computed(() => job.value?.results.filter((item) => !item.success) || [])
+const warningResults = computed(() => job.value?.results.filter((item) => item.success && item.warning) || [])
 
 const normalizeCell = (value: unknown) => String(value ?? '').trim()
 
@@ -288,8 +306,8 @@ const notifyCompletion = () => {
   if (job.value.success > 0) {
     emit('imported')
   }
-  if (job.value.failed > 0) {
-    appStore.showWarning(`导入完成：成功 ${job.value.success}，失败 ${job.value.failed}`)
+  if (job.value.failed > 0 || warningResults.value.length > 0) {
+    appStore.showWarning(`导入完成：成功 ${job.value.success}，失败 ${job.value.failed}，提示 ${warningResults.value.length}`)
   } else {
     appStore.showSuccess(`导入完成：成功 ${job.value.success}`)
   }

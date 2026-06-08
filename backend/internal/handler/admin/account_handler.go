@@ -44,6 +44,13 @@ func NewOAuthHandler(oauthService *service.OAuthService) *OAuthHandler {
 	}
 }
 
+type accountTestRunner interface {
+	TestAccountConnection(c *gin.Context, accountID int64, modelID string, prompt string, mode string) error
+	RunTestBackground(ctx context.Context, accountID int64, modelID string) (*service.ScheduledTestResult, error)
+	ProbeOpenAIAPIKeyResponsesSupport(ctx context.Context, accountID int64)
+	FetchUpstreamSupportedModels(ctx context.Context, account *service.Account) ([]string, error)
+}
+
 // AccountHandler handles admin account management
 type AccountHandler struct {
 	adminService            service.AdminService
@@ -53,7 +60,7 @@ type AccountHandler struct {
 	antigravityOAuthService *service.AntigravityOAuthService
 	rateLimitService        *service.RateLimitService
 	accountUsageService     *service.AccountUsageService
-	accountTestService      *service.AccountTestService
+	accountTestService      accountTestRunner
 	concurrencyService      *service.ConcurrencyService
 	crsSyncService          *service.CRSSyncService
 	sessionLimitCache       service.SessionLimitCache

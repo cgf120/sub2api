@@ -30,6 +30,8 @@ func TestRegisterAccountRoutesStaticPathsDoNotConflictWithIDRoutes(t *testing.T)
 		path   string
 	}{
 		{http.MethodGet, "/api/v1/admin/accounts/bulk-import/:job_id"},
+		{http.MethodPost, "/api/v1/admin/accounts/batch-test"},
+		{http.MethodGet, "/api/v1/admin/accounts/batch-test/:job_id"},
 		{http.MethodPost, "/api/v1/admin/accounts/today-stats/batch"},
 		{http.MethodPost, "/api/v1/admin/accounts/models/sync-upstream-preview"},
 		{http.MethodGet, "/api/v1/admin/accounts/data"},

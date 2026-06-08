@@ -22,6 +22,10 @@ type stubAdminService struct {
 	createdGroups        []*service.CreateGroupInput
 	updatedGroups        []*service.UpdateGroupInput
 	createdAccounts      []*service.CreateAccountInput
+	deletedAccountIDs    []int64
+	updatedAccountStatus map[int64]string
+	accountErrors        map[int64]string
+	accountSchedulable   map[int64]bool
 	createdProxies       []*service.CreateProxyInput
 	updatedProxyIDs      []int64
 	updatedProxies       []*service.UpdateProxyInput
@@ -360,7 +364,17 @@ func (s *stubAdminService) UpdateAccount(ctx context.Context, id int64, input *s
 	if s.updateAccountErr != nil {
 		return nil, s.updateAccountErr
 	}
-	account := service.Account{ID: id, Name: input.Name, Status: service.StatusActive}
+	status := service.StatusActive
+	if input.Status != "" {
+		status = input.Status
+		s.mu.Lock()
+		if s.updatedAccountStatus == nil {
+			s.updatedAccountStatus = make(map[int64]string)
+		}
+		s.updatedAccountStatus[id] = input.Status
+		s.mu.Unlock()
+	}
+	account := service.Account{ID: id, Name: input.Name, Status: status}
 	return &account, nil
 }
 
@@ -369,6 +383,9 @@ func (s *stubAdminService) UpdateAccountExtra(ctx context.Context, id int64, upd
 }
 
 func (s *stubAdminService) DeleteAccount(ctx context.Context, id int64) error {
+	s.mu.Lock()
+	s.deletedAccountIDs = append(s.deletedAccountIDs, id)
+	s.mu.Unlock()
 	return nil
 }
 
@@ -383,10 +400,22 @@ func (s *stubAdminService) ClearAccountError(ctx context.Context, id int64) (*se
 }
 
 func (s *stubAdminService) SetAccountError(ctx context.Context, id int64, errorMsg string) error {
+	s.mu.Lock()
+	if s.accountErrors == nil {
+		s.accountErrors = make(map[int64]string)
+	}
+	s.accountErrors[id] = errorMsg
+	s.mu.Unlock()
 	return nil
 }
 
 func (s *stubAdminService) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*service.Account, error) {
+	s.mu.Lock()
+	if s.accountSchedulable == nil {
+		s.accountSchedulable = make(map[int64]bool)
+	}
+	s.accountSchedulable[id] = schedulable
+	s.mu.Unlock()
 	account := service.Account{ID: id, Name: "account", Status: service.StatusActive, Schedulable: schedulable}
 	return &account, nil
 }

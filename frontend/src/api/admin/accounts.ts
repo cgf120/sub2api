@@ -21,7 +21,8 @@ import type {
   CheckMixedChannelRequest,
   CheckMixedChannelResponse,
   AccountBulkImportItem,
-  AccountBulkImportJob
+  AccountBulkImportJob,
+  AccountBatchTestJob
 } from '@/types'
 
 /**
@@ -379,6 +380,18 @@ export async function startBulkImport(items: AccountBulkImportItem[]): Promise<A
 
 export async function getBulkImportJob(jobId: string): Promise<AccountBulkImportJob> {
   const { data } = await apiClient.get<AccountBulkImportJob>(`/admin/accounts/bulk-import/${encodeURIComponent(jobId)}`)
+  return data
+}
+
+export async function startBatchTest(accountIds: number[]): Promise<AccountBatchTestJob> {
+  const { data } = await apiClient.post<AccountBatchTestJob>('/admin/accounts/batch-test', {
+    account_ids: accountIds
+  })
+  return data
+}
+
+export async function getBatchTestJob(jobId: string): Promise<AccountBatchTestJob> {
+  const { data } = await apiClient.get<AccountBatchTestJob>(`/admin/accounts/batch-test/${encodeURIComponent(jobId)}`)
   return data
 }
 
@@ -749,6 +762,8 @@ export const accountsAPI = {
   batchCreate,
   startBulkImport,
   getBulkImportJob,
+  startBatchTest,
+  getBatchTestJob,
   batchUpdateCredentials,
   bulkUpdate,
   previewFromCrs,
