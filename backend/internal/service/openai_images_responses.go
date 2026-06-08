@@ -1195,7 +1195,33 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 			}
 		}
-		return s.handleErrorResponse(upstreamCtx, resp, c, account, responsesBody)
+		// OAuth session tokens are also valid on the public OpenAI API.
+		// When the Codex/Responses API returns a non-failover error (e.g.
+		// model not supported via Codex for ChatGPT accounts), fall back
+		// to the direct Images API (api.openai.com/v1/images/generations).
+		logger.LegacyPrintf(
+			"service.openai_gateway",
+			"[OpenAI] Images OAuth Codex API returned status=%d msg=%s, falling back to direct Images API request_model=%s account_id=%d",
+			resp.StatusCode,
+			upstreamMsg,
+			requestModel,
+			account.ID,
+		)
+		fallbackResult, fallbackErr := s.forwardOpenAIImagesAPIKey(
+			ctx, c, account, parsed.Body, parsed, channelMappedModel,
+		)
+		if fallbackErr == nil {
+			logger.LegacyPrintf(
+				"service.openai_gateway",
+				"[OpenAI] Images OAuth fallback to direct API succeeded request_model=%s account_id=%d",
+				requestModel,
+				account.ID,
+			)
+			return fallbackResult, nil
+		}
+		// Fallback also failed; avoid calling handleErrorResponse again
+		// since the fallback path already wrote the error response.
+		return nil, fallbackErr
 	}
 	defer func() { _ = resp.Body.Close() }()
 

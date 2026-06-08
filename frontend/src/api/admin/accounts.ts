@@ -19,7 +19,9 @@ import type {
   CodexSessionImportRequest,
   CodexSessionImportResult,
   CheckMixedChannelRequest,
-  CheckMixedChannelResponse
+  CheckMixedChannelResponse,
+  AccountBulkImportItem,
+  AccountBulkImportJob
 } from '@/types'
 
 /**
@@ -360,13 +362,23 @@ export async function exchangeCode(
 export async function batchCreate(accounts: CreateAccountRequest[]): Promise<{
   success: number
   failed: number
-  results: Array<{ success: boolean; account?: Account; error?: string }>
+  results: Array<{ success: boolean; id?: number; name?: string; error?: string }>
 }> {
   const { data } = await apiClient.post<{
     success: number
     failed: number
-    results: Array<{ success: boolean; account?: Account; error?: string }>
+    results: Array<{ success: boolean; id?: number; name?: string; error?: string }>
   }>('/admin/accounts/batch', { accounts })
+  return data
+}
+
+export async function startBulkImport(items: AccountBulkImportItem[]): Promise<AccountBulkImportJob> {
+  const { data } = await apiClient.post<AccountBulkImportJob>('/admin/accounts/bulk-import', { items })
+  return data
+}
+
+export async function getBulkImportJob(jobId: string): Promise<AccountBulkImportJob> {
+  const { data } = await apiClient.get<AccountBulkImportJob>(`/admin/accounts/bulk-import/${encodeURIComponent(jobId)}`)
   return data
 }
 
@@ -725,6 +737,8 @@ export const accountsAPI = {
   exchangeCode,
   refreshOpenAIToken,
   batchCreate,
+  startBulkImport,
+  getBulkImportJob,
   batchUpdateCredentials,
   bulkUpdate,
   previewFromCrs,

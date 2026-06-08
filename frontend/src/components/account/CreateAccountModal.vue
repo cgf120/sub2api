@@ -70,7 +70,7 @@
       <!-- Platform Selection - Segmented Control Style -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
-        <div class="mt-2 flex rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-tour="account-form-platform">
+        <div class="mt-2 grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700 sm:grid-cols-5" data-tour="account-form-platform">
           <button
             type="button"
             @click="form.platform = 'anthropic'"
@@ -146,6 +146,19 @@
           >
             <Icon name="cloud" size="sm" />
             Antigravity
+          </button>
+          <button
+            type="button"
+            @click="form.platform = 'grok'"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'grok'
+                ? 'bg-white text-rose-600 shadow-sm dark:bg-dark-600 dark:text-rose-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="grok" size="sm" />
+            Grok
           </button>
         </div>
       </div>
@@ -800,6 +813,66 @@
         </div>
       </div>
 
+      <!-- Grok SSO credentials -->
+      <div v-if="form.platform === 'grok'" class="space-y-4">
+        <div>
+          <label class="input-label">Grok SSO</label>
+          <textarea
+            v-model="grokSSO"
+            required
+            rows="3"
+            class="input font-mono"
+            placeholder="sso cookie value"
+          ></textarea>
+        </div>
+        <div>
+          <label class="input-label">User-Agent</label>
+          <input
+            v-model="grokUserAgent"
+            type="text"
+            class="input font-mono"
+            placeholder="Mozilla/5.0 ..."
+          />
+        </div>
+        <div>
+          <label class="input-label">Extra Cookies</label>
+          <textarea
+            v-model="grokExtraCookies"
+            rows="2"
+            class="input font-mono"
+            placeholder="cf_clearance=...; other=value"
+          ></textarea>
+        </div>
+        <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-700/40">
+          <label class="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-white">
+            <input
+              v-model="grokBudgetEnabled"
+              type="checkbox"
+              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500 dark:bg-dark-700"
+            />
+            Grok Local Budget
+          </label>
+          <div v-if="grokBudgetEnabled" class="mt-3 space-y-3">
+            <div class="grid grid-cols-[minmax(7rem,1fr)_repeat(3,minmax(5.5rem,7rem))] gap-2 text-xs font-medium text-gray-500 dark:text-gray-400">
+              <span>Scope</span>
+              <span>Limit</span>
+              <span>Window(s)</span>
+              <span>Cost</span>
+            </div>
+            <div
+              v-for="scope in grokBudgetScopes"
+              :key="scope.key"
+              class="grid grid-cols-[minmax(7rem,1fr)_repeat(3,minmax(5.5rem,7rem))] items-center gap-2"
+            >
+              <span class="text-sm text-gray-700 dark:text-gray-300">{{ scope.label }}</span>
+              <input v-model.number="scope.limit" type="number" min="0" class="input h-9" />
+              <input v-model.number="scope.window_seconds" type="number" min="60" class="input h-9" />
+              <input v-model.number="scope.cost_per_request" type="number" min="1" class="input h-9" />
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Vertex Service Account -->
       <div v-if="(form.platform === 'gemini' || form.platform === 'anthropic') && accountCategory === 'service_account'" class="space-y-4">
         <div>
@@ -1038,7 +1111,7 @@
                 ? 'sk-proj-...'
                 : form.platform === 'gemini'
                   ? 'AIza...'
-                  : 'sk-ant-...'
+              : 'sk-ant-...'
             "
           />
           <p class="input-hint">{{ apiKeyHint }}</p>
@@ -3235,6 +3308,7 @@ import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
+import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
@@ -3361,6 +3435,17 @@ const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_acco
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
+const grokSSO = ref('')
+const grokUserAgent = ref('')
+const grokExtraCookies = ref('')
+const grokBudgetEnabled = ref(false)
+const defaultGrokBudgetScopes = () => [
+  { key: 'image_lite', label: 'Image Lite', limit: null as number | null, window_seconds: 7200, cost_per_request: 2 },
+  { key: 'image_normal', label: 'Image Normal', limit: null as number | null, window_seconds: 7200, cost_per_request: 6 },
+  { key: 'image_pro', label: 'Image Pro', limit: null as number | null, window_seconds: 7200, cost_per_request: 4 },
+  { key: 'video', label: 'Video', limit: null as number | null, window_seconds: 86400, cost_per_request: 1 }
+]
+const grokBudgetScopes = ref(defaultGrokBudgetScopes())
 
 const syncPreviewCredentials = computed(() => {
   if (!apiKeyValue.value) return undefined
@@ -3540,6 +3625,24 @@ function buildAntigravityExtra(): Record<string, unknown> | undefined {
   return Object.keys(extra).length > 0 ? extra : undefined
 }
 
+function buildGrokExtra(): Record<string, unknown> | undefined {
+  if (!grokBudgetEnabled.value) return undefined
+  const policy: Record<string, unknown> = {}
+  for (const scope of grokBudgetScopes.value) {
+    const limit = Number(scope.limit)
+    if (!Number.isFinite(limit) || limit <= 0) continue
+    const windowSeconds = Number(scope.window_seconds)
+    const cost = Number(scope.cost_per_request)
+    policy[scope.key] = {
+      limit,
+      window_seconds: Number.isFinite(windowSeconds) && windowSeconds > 0 ? windowSeconds : 3600,
+      cost_per_request: Number.isFinite(cost) && cost > 0 ? cost : 1
+    }
+  }
+  if (Object.keys(policy).length === 0) return undefined
+  return { grok_budget_policy: policy }
+}
+
 const buildOpenAICompactModelMapping = () =>
   buildModelMappingObject('mapping', [], openAICompactModelMappings.value)
 
@@ -3698,6 +3801,9 @@ const form = reactive({
 
 // Helper to check if current type needs OAuth flow
 const isOAuthFlow = computed(() => {
+  if (form.platform === 'grok') {
+    return false
+  }
   // Antigravity upstream 类型不需要 OAuth 流程
   if (form.platform === 'antigravity' && antigravityAccountType.value === 'upstream') {
     return false
@@ -3850,6 +3956,16 @@ watch(
     if (newPlatform !== 'anthropic') {
       anthropicPassthroughEnabled.value = false
       webSearchEmulationMode.value = 'default'
+    }
+    if (newPlatform === 'grok') {
+      accountCategory.value = 'oauth-based'
+      addMethod.value = 'oauth'
+      modelRestrictionMode.value = 'whitelist'
+      allowedModels.value = [...getModelsByPlatform('grok')]
+    } else {
+      grokSSO.value = ''
+      grokUserAgent.value = ''
+      grokExtraCookies.value = ''
     }
     // Reset OAuth states
     oauth.resetState()
@@ -4213,6 +4329,11 @@ const resetForm = () => {
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
+  grokSSO.value = ''
+  grokUserAgent.value = ''
+  grokExtraCookies.value = ''
+  grokBudgetEnabled.value = false
+  grokBudgetScopes.value = defaultGrokBudgetScopes()
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
   editQuotaWeeklyLimit.value = null
@@ -4602,6 +4723,28 @@ const handleSubmit = async () => {
       tier_id: 'vertex'
     }
     await createAccountAndFinish(form.platform, 'service_account' as AccountType, credentials)
+    return
+  }
+
+  if (form.platform === 'grok') {
+    if (!form.name.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+      return
+    }
+    if (!grokSSO.value.trim()) {
+      appStore.showError('Please enter Grok SSO')
+      return
+    }
+    const credentials: Record<string, unknown> = {
+      sso: grokSSO.value.trim()
+    }
+    if (grokUserAgent.value.trim()) {
+      credentials.user_agent = grokUserAgent.value.trim()
+    }
+    if (grokExtraCookies.value.trim()) {
+      credentials.extra_cookies = grokExtraCookies.value.trim()
+    }
+    await createAccountAndFinish('grok', 'oauth', credentials, buildGrokExtra())
     return
   }
 

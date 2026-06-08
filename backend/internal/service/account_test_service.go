@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/grok"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
@@ -61,12 +62,17 @@ func isOpenAIImageModel(model string) bool {
 	return strings.HasPrefix(strings.ToLower(model), "gpt-image-")
 }
 
+func isGrokImageModel(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "grok-imagine-image")
+}
+
 // AccountTestService handles account testing operations
 type AccountTestService struct {
 	accountRepo               AccountRepository
 	geminiTokenProvider       *GeminiTokenProvider
 	claudeTokenProvider       *ClaudeTokenProvider
 	antigravityGatewayService *AntigravityGatewayService
+	grokGatewayService        *GrokGatewayService
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
 	tlsFPProfileService       *TLSFingerprintProfileService
@@ -78,6 +84,7 @@ func NewAccountTestService(
 	geminiTokenProvider *GeminiTokenProvider,
 	claudeTokenProvider *ClaudeTokenProvider,
 	antigravityGatewayService *AntigravityGatewayService,
+	grokGatewayService *GrokGatewayService,
 	httpUpstream HTTPUpstream,
 	cfg *config.Config,
 	tlsFPProfileService *TLSFingerprintProfileService,
@@ -87,6 +94,7 @@ func NewAccountTestService(
 		geminiTokenProvider:       geminiTokenProvider,
 		claudeTokenProvider:       claudeTokenProvider,
 		antigravityGatewayService: antigravityGatewayService,
+		grokGatewayService:        grokGatewayService,
 		httpUpstream:              httpUpstream,
 		cfg:                       cfg,
 		tlsFPProfileService:       tlsFPProfileService,
@@ -190,6 +198,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 
 	if account.Platform == PlatformAntigravity {
 		return s.routeAntigravityTest(c, account, modelID, prompt)
+	}
+
+	if account.IsGrok() {
+		return s.testGrokAccountConnection(c, account, modelID, prompt)
 	}
 
 	return s.testClaudeAccountConnection(c, account, modelID)
@@ -967,6 +979,171 @@ func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, ac
 	return nil
 }
 
+// testGrokAccountConnection tests a Grok account through the same Web protocol
+// used by the Grok gateway. Text models use app-chat, image models use ws/imagine.
+func (s *AccountTestService) testGrokAccountConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
+	if s.grokGatewayService == nil {
+		return s.sendErrorAndEnd(c, "Grok gateway service not configured")
+	}
+	testModelID := modelID
+	if testModelID == "" {
+		testModelID = grok.ModelChatFast
+	}
+	if isGrokImageModel(testModelID) {
+		imagePrompt := strings.TrimSpace(prompt)
+		if imagePrompt == "" {
+			imagePrompt = defaultOpenAIImageTestPrompt
+		}
+		return s.testGrokImageConnection(c, account, testModelID, imagePrompt)
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	modeID := grok.ModeIDForModel(testModelID)
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 Grok Web app-chat 测试文本连接"})
+	s.sendEvent(c, TestEvent{Type: "status", Text: fmt.Sprintf("Grok 模式：%s", modeID)})
+	if snapshot, err := s.grokGatewayService.FetchRateLimits(c.Request.Context(), account, testModelID); err == nil {
+		s.sendEvent(c, TestEvent{Type: "status", Text: formatGrokRateLimitSnapshot(snapshot)})
+	} else {
+		s.sendEvent(c, TestEvent{Type: "status", Text: "Grok 文本额度查询失败：" + err.Error()})
+	}
+
+	var streamed bool
+	result, text, err := s.grokGatewayService.Chat(c.Request.Context(), account, &GrokChatCompletionRequest{
+		Model:  testModelID,
+		Prompt: "hi",
+		ModeID: modeID,
+		Stream: true,
+	}, func(token string) error {
+		if token == "" {
+			return nil
+		}
+		streamed = true
+		s.sendEvent(c, TestEvent{Type: "content", Text: token})
+		return nil
+	})
+	if err != nil {
+		return s.sendErrorAndEnd(c, err.Error())
+	}
+	if !streamed && strings.TrimSpace(text) != "" {
+		s.sendEvent(c, TestEvent{Type: "content", Text: text})
+	}
+	if !streamed && strings.TrimSpace(text) == "" {
+		text = "Grok test request completed"
+		s.sendEvent(c, TestEvent{Type: "content", Text: text})
+	}
+	if result != nil {
+		if result.UpstreamModel != "" {
+			s.sendEvent(c, TestEvent{Type: "status", Text: "上游模型：" + result.UpstreamModel})
+		}
+		info := fmt.Sprintf(
+			"响应信息：request_id=%s duration=%s input_tokens=%d output_tokens=%d",
+			result.RequestID,
+			result.Duration.Round(time.Millisecond),
+			result.Usage.InputTokens,
+			result.Usage.OutputTokens,
+		)
+		if result.FirstTokenMs != nil {
+			info += fmt.Sprintf(" first_token_ms=%d", *result.FirstTokenMs)
+		}
+		s.sendEvent(c, TestEvent{Type: "status", Text: info})
+	}
+	s.sendEvent(c, TestEvent{Type: "status", Text: "已通过 Grok Web app-chat 验证"})
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
+}
+
+func formatGrokRateLimitSnapshot(snapshot *grok.RateLimitSnapshot) string {
+	if snapshot == nil {
+		return "Grok 文本额度：unknown"
+	}
+	parts := []string{"Grok 文本额度"}
+	if snapshot.ModelName != "" {
+		parts = append(parts, "model="+snapshot.ModelName)
+	}
+	if snapshot.RemainingQueries != nil {
+		parts = append(parts, fmt.Sprintf("remaining=%d", *snapshot.RemainingQueries))
+	}
+	if snapshot.TotalQueries != nil {
+		parts = append(parts, fmt.Sprintf("total=%d", *snapshot.TotalQueries))
+	}
+	if snapshot.WindowSizeSeconds != nil {
+		parts = append(parts, fmt.Sprintf("window=%ds", *snapshot.WindowSizeSeconds))
+	}
+	if snapshot.WaitTimeSeconds != nil && *snapshot.WaitTimeSeconds > 0 {
+		parts = append(parts, fmt.Sprintf("wait=%ds", *snapshot.WaitTimeSeconds))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (s *AccountTestService) testGrokImageConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: modelID})
+	if strings.EqualFold(modelID, grok.ModelImageLite) {
+		s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 Grok REST app-chat lite 测试生图"})
+	} else {
+		s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 Grok WS imagine 测试生图"})
+	}
+	s.sendEvent(c, TestEvent{Type: "status", Text: "图片输出：public_url"})
+
+	result, images, err := s.grokGatewayService.Images(c.Request.Context(), account, &GrokImagesRequest{
+		Model:       modelID,
+		Prompt:      prompt,
+		Count:       1,
+		Size:        "1024x1024",
+		AspectRatio: "1:1",
+	})
+	if err != nil {
+		return s.sendErrorAndEnd(c, err.Error())
+	}
+	if len(images) == 0 {
+		return s.sendErrorAndEnd(c, "No images returned from Grok")
+	}
+	for _, image := range images {
+		if image.URL != "" {
+			s.sendEvent(c, TestEvent{Type: "content", Text: "Public URL: " + image.URL + "\n"})
+			s.sendEvent(c, TestEvent{
+				Type:     "image",
+				ImageURL: image.URL,
+				MimeType: "image/jpeg",
+			})
+		}
+	}
+	if result != nil {
+		if result.UpstreamModel != "" {
+			s.sendEvent(c, TestEvent{Type: "status", Text: "上游模型：" + result.UpstreamModel})
+		}
+		s.sendEvent(c, TestEvent{
+			Type: "status",
+			Text: fmt.Sprintf(
+				"响应信息：request_id=%s duration=%s images=%d input_tokens=%d output_tokens=%d",
+				result.RequestID,
+				result.Duration.Round(time.Millisecond),
+				result.ImageCount,
+				result.Usage.InputTokens,
+				result.Usage.OutputTokens,
+			),
+		})
+	}
+	if strings.EqualFold(modelID, grok.ModelImageLite) {
+		s.sendEvent(c, TestEvent{Type: "status", Text: "已通过 Grok REST app-chat lite 验证"})
+	} else {
+		s.sendEvent(c, TestEvent{Type: "status", Text: "已通过 Grok WS imagine 验证"})
+	}
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
+}
+
 // buildGeminiAPIKeyRequest builds request for Gemini API Key accounts
 func (s *AccountTestService) buildGeminiAPIKeyRequest(ctx context.Context, account *Account, modelID string, payload []byte) (*http.Request, error) {
 	apiKey := account.GetCredential("api_key")
@@ -1476,10 +1653,18 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 	if authToken == "" {
 		return s.sendErrorAndEnd(c, "No API key available")
 	}
+	return s.testOpenAIImageDirect(c, ctx, authToken, account, modelID, prompt)
+}
 
-	baseURL := account.GetOpenAIBaseURL()
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
+// testOpenAIImageDirect tests OpenAI image generation by calling the public
+// Images API directly with the given Bearer token. Used by both APIKey and
+// OAuth accounts (OAuth session tokens are also valid on api.openai.com).
+func (s *AccountTestService) testOpenAIImageDirect(c *gin.Context, ctx context.Context, authToken string, account *Account, modelID, prompt string) error {
+	baseURL := "https://api.openai.com"
+	if account != nil {
+		if b := account.GetOpenAIBaseURL(); b != "" {
+			baseURL = b
+		}
 	}
 	normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
 	if err != nil {
@@ -1497,10 +1682,9 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: modelID})
 
 	payload := map[string]any{
-		"model":           modelID,
-		"prompt":          prompt,
-		"n":               1,
-		"response_format": "b64_json",
+		"model":  modelID,
+		"prompt": prompt,
+		"n":      1,
 	}
 	payloadBytes, _ := json.Marshal(payload)
 
@@ -1513,11 +1697,12 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 	req.Header.Set("Authorization", "Bearer "+authToken)
 
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
+	if account != nil && account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
 
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	tlsProfile := s.tlsFPProfileService.ResolveTLSProfile(account)
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, tlsProfile)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
@@ -1627,12 +1812,20 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 		}
 	}()
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-		message := strings.TrimSpace(extractUpstreamErrorMessage(body))
-		if message == "" {
-			message = fmt.Sprintf("Responses API returned %d", resp.StatusCode)
+		codexBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		codexMsg := strings.TrimSpace(extractUpstreamErrorMessage(codexBody))
+		if codexMsg == "" {
+			codexMsg = fmt.Sprintf("Responses API returned %d", resp.StatusCode)
 		}
-		return s.sendErrorAndEnd(c, message)
+		// OAuth session tokens are also valid on the public OpenAI API.
+		// When Codex /responses fails (e.g. model not supported via Codex
+		// for ChatGPT accounts), fall back to the direct Images API using
+		// the same OAuth session token as the Bearer auth.
+		s.sendEvent(c, TestEvent{Type: "content", Text: "Codex returned error, falling back to direct Images API...\n"})
+		if fallbackErr := s.testOpenAIImageDirect(c, ctx, authToken, account, modelID, prompt); fallbackErr == nil {
+			return nil
+		}
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Codex error: %s", codexMsg))
 	}
 
 	body, err := io.ReadAll(resp.Body)

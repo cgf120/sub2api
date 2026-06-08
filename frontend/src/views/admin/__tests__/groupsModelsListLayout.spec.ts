@@ -16,4 +16,11 @@ describe("groups models list layout", () => {
     expect(groupsViewSource).toContain("max-h-64 space-y-2 overflow-y-auto p-2");
     expect(groupsViewSource).not.toContain("sticky top-0");
   });
+
+  it("shows image pricing controls for Grok groups", () => {
+    expect(groupsViewSource).toContain("const imagePricingPlatforms");
+    expect(groupsViewSource).toContain('"grok"');
+    expect(groupsViewSource).toContain("isImagePricingPlatform(createForm.platform)");
+    expect(groupsViewSource).toContain("isImagePricingPlatform(editForm.platform)");
+  });
 });

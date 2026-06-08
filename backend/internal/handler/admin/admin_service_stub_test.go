@@ -19,6 +19,8 @@ type stubAdminService struct {
 	redeems              []service.RedeemCode
 	boundAuthIdentity    *service.AdminBindAuthIdentityInput
 	boundAuthIdentityFor int64
+	createdGroups        []*service.CreateGroupInput
+	updatedGroups        []*service.UpdateGroupInput
 	createdAccounts      []*service.CreateAccountInput
 	createdProxies       []*service.CreateProxyInput
 	updatedProxyIDs      []int64
@@ -277,12 +279,14 @@ func (s *stubAdminService) GetGroupModelsListCandidates(ctx context.Context, id 
 }
 
 func (s *stubAdminService) CreateGroup(ctx context.Context, input *service.CreateGroupInput) (*service.Group, error) {
-	group := service.Group{ID: 200, Name: input.Name, Status: service.StatusActive}
+	s.createdGroups = append(s.createdGroups, input)
+	group := service.Group{ID: 200, Name: input.Name, Platform: input.Platform, Status: service.StatusActive}
 	return &group, nil
 }
 
 func (s *stubAdminService) UpdateGroup(ctx context.Context, id int64, input *service.UpdateGroupInput) (*service.Group, error) {
-	group := service.Group{ID: id, Name: input.Name, Status: service.StatusActive}
+	s.updatedGroups = append(s.updatedGroups, input)
+	group := service.Group{ID: id, Name: input.Name, Platform: input.Platform, Status: service.StatusActive}
 	return &group, nil
 }
 

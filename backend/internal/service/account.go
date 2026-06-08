@@ -173,6 +173,10 @@ func (a *Account) IsGemini() bool {
 	return a.Platform == PlatformGemini
 }
 
+func (a *Account) IsGrok() bool {
+	return a.Platform == PlatformGrok
+}
+
 func (a *Account) GeminiOAuthType() string {
 	if a.Platform != PlatformGemini || a.Type != AccountTypeOAuth {
 		return ""

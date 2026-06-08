@@ -751,11 +751,7 @@
 
         <!-- 图片生成计费配置 -->
         <div
-          v-if="
-            createForm.platform === 'antigravity' ||
-            createForm.platform === 'gemini' ||
-            createForm.platform === 'openai'
-          "
+          v-if="isImagePricingPlatform(createForm.platform)"
           class="border-t pt-4"
         >
           <label
@@ -2039,11 +2035,7 @@
 
         <!-- 图片生成计费配置 -->
         <div
-          v-if="
-            editForm.platform === 'antigravity' ||
-            editForm.platform === 'gemini' ||
-            editForm.platform === 'openai'
-          "
+          v-if="isImagePricingPlatform(editForm.platform)"
           class="border-t pt-4"
         >
           <label
@@ -2966,6 +2958,8 @@
                         ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
                         : group.platform === 'antigravity'
                           ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                          : group.platform === 'grok'
+                            ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400'
                           : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
                   ]"
                 >
@@ -3138,6 +3132,7 @@ const platformOptions = computed(() => [
   { value: "openai", label: "OpenAI" },
   { value: "gemini", label: "Gemini" },
   { value: "antigravity", label: "Antigravity" },
+  { value: "grok", label: "Grok" },
 ]);
 
 const platformFilterOptions = computed(() => [
@@ -3146,6 +3141,7 @@ const platformFilterOptions = computed(() => [
   { value: "openai", label: "OpenAI" },
   { value: "gemini", label: "Gemini" },
   { value: "antigravity", label: "Antigravity" },
+  { value: "grok", label: "Grok" },
 ]);
 
 const editStatusOptions = computed(() => [
@@ -3712,6 +3708,16 @@ const imagePricingTiers = [
   { key: "image_price_4k", label: "4K" },
 ] as const;
 
+const imagePricingPlatforms = new Set<GroupPlatform>([
+  "antigravity",
+  "gemini",
+  "openai",
+  "grok",
+]);
+
+const isImagePricingPlatform = (platform: GroupPlatform) =>
+  imagePricingPlatforms.has(platform);
+
 const normalizePreviewNumber = (value: number | string | null | undefined, fallback = 0) => {
   if (value === null || value === undefined || value === "") {
     return fallback;
@@ -4240,7 +4246,7 @@ watch(
     if (newVal !== "openai") {
       resetMessagesDispatchFormState(createForm);
     }
-    if (!["openai", "antigravity", "anthropic", "gemini"].includes(newVal)) {
+    if (!["openai", "antigravity", "anthropic", "gemini", "grok"].includes(newVal)) {
       createForm.require_oauth_only = false;
       createForm.require_privacy_set = false;
     }
@@ -4258,7 +4264,7 @@ watch(
     if (newVal !== "openai") {
       resetMessagesDispatchFormState(editForm);
     }
-    if (!["openai", "antigravity", "anthropic", "gemini"].includes(newVal)) {
+    if (!["openai", "antigravity", "anthropic", "gemini", "grok"].includes(newVal)) {
       editForm.require_oauth_only = false;
       editForm.require_privacy_set = false;
     }

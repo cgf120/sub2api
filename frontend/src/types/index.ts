@@ -485,7 +485,7 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity'
+export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok'
 
 export type SubscriptionType = 'standard' | 'subscription'
 
@@ -688,7 +688,7 @@ export interface UpdateGroupRequest {
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity'
+export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok'
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
@@ -1029,6 +1029,38 @@ export interface CreateAccountRequest {
   expires_at?: number | null
   auto_pause_on_expired?: boolean
   confirm_mixed_channel_risk?: boolean
+}
+
+export interface AccountBulkImportItem {
+  row_number: number
+  name?: string
+  type: string
+  credential: string
+}
+
+export interface AccountBulkImportResult {
+  row_number: number
+  name?: string
+  type?: string
+  account_id?: number
+  success: boolean
+  error?: string
+}
+
+export type AccountBulkImportJobStatus = 'pending' | 'running' | 'completed' | 'failed'
+
+export interface AccountBulkImportJob {
+  id: string
+  status: AccountBulkImportJobStatus
+  total: number
+  processed: number
+  success: number
+  failed: number
+  results: AccountBulkImportResult[]
+  error?: string
+  created_at: number
+  updated_at: number
+  finished_at?: number
 }
 
 export interface UpdateAccountRequest {

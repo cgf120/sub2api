@@ -59,17 +59,17 @@ function createStreamResponse(lines: string[]) {
   } as Response
 }
 
-function mountModal() {
+function mountModal(account: Record<string, unknown> = {
+  id: 42,
+  name: 'Gemini Image Test',
+  platform: 'gemini',
+  type: 'apikey',
+  status: 'active'
+}) {
   return mount(AccountTestModal, {
     props: {
       show: false,
-      account: {
-        id: 42,
-        name: 'Gemini Image Test',
-        platform: 'gemini',
-        type: 'apikey',
-        status: 'active'
-      }
+      account
     } as any,
     global: {
       stubs: {
@@ -143,5 +143,59 @@ describe('AccountTestModal', () => {
     const preview = wrapper.find('img[alt="test-image-1"]')
     expect(preview.exists()).toBe(true)
     expect(preview.attributes('src')).toBe('data:image/png;base64,QUJD')
+  })
+
+  it('grok 测试候选包含文本和图片模型并支持图片预览', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'grok-4.20-fast', display_name: 'Grok 4.20 Fast' },
+      { id: 'grok-4.20-auto', display_name: 'Grok 4.20 Auto' },
+      { id: 'grok-imagine-image', display_name: 'Grok Imagine Image' },
+      { id: 'grok-imagine-video', display_name: 'Grok Imagine Video' }
+    ])
+    global.fetch = vi.fn().mockResolvedValue(
+      createStreamResponse([
+        'data: {"type":"test_start","model":"grok-imagine-image"}\n',
+        'data: {"type":"content","text":"Public URL: https://imagine-public.x.ai/imagine-public/images/test.jpg\\n"}\n',
+        'data: {"type":"status","text":"响应信息：request_id=grok-test duration=1s images=1 input_tokens=12 output_tokens=1"}\n',
+        'data: {"type":"image","image_url":"https://imagine-public.x.ai/imagine-public/images/test.jpg","mime_type":"image/jpeg"}\n',
+        'data: {"type":"test_complete","success":true}\n'
+      ])
+    ) as any
+
+    const wrapper = mountModal({
+      id: 43,
+      name: 'grok1',
+      platform: 'grok',
+      type: 'oauth',
+      status: 'active'
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).availableModels.map((model: { id: string }) => model.id)).toEqual([
+      'grok-4.20-fast',
+      'grok-4.20-auto',
+      'grok-imagine-image'
+    ])
+    expect((wrapper.vm as any).selectedModelId).toBe('grok-4.20-fast')
+
+    ;(wrapper.vm as any).selectedModelId = 'grok-imagine-image'
+    await flushPromises()
+
+    const promptInput = wrapper.find('textarea.textarea-stub')
+    expect(promptInput.exists()).toBe(true)
+    await promptInput.setValue('draw grok test image')
+
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+    await flushPromises()
+
+    const [, request] = (global.fetch as any).mock.calls[0]
+    expect(JSON.parse(request.body)).toEqual({
+      model_id: 'grok-imagine-image',
+      prompt: 'draw grok test image'
+    })
+    expect(wrapper.text()).toContain('响应信息：request_id=grok-test')
+    expect(wrapper.find('img[alt="test-image-1"]').attributes('src')).toBe('https://imagine-public.x.ai/imagine-public/images/test.jpg')
   })
 })

@@ -276,6 +276,7 @@ let abortController: AbortController | null = null
 const generatedImages = ref<PreviewImage[]>([])
 const previewImageUrl = ref('')
 const prioritizedGeminiModels = ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3-flash-preview', 'gemini-3-pro-preview', 'gemini-2.0-flash']
+const defaultGrokTestModel = 'grok-4.20-fast'
 const supportsGeminiImageTest = computed(() => {
   const modelID = selectedModelId.value.toLowerCase()
   if (!modelID.startsWith('gemini-') || !modelID.includes('-image')) return false
@@ -289,7 +290,12 @@ const supportsOpenAIImageTest = computed(() => {
   return props.account?.platform === 'openai'
 })
 
-const supportsImageTest = computed(() => supportsGeminiImageTest.value || supportsOpenAIImageTest.value)
+const supportsGrokImageTest = computed(() => {
+  const modelID = selectedModelId.value.toLowerCase()
+  return props.account?.platform === 'grok' && modelID.startsWith('grok-imagine-image')
+})
+
+const supportsImageTest = computed(() => supportsGeminiImageTest.value || supportsOpenAIImageTest.value || supportsGrokImageTest.value)
 
 const sortTestModels = (models: ClaudeModel[]) => {
   const priorityMap = new Map(prioritizedGeminiModels.map((id, index) => [id, index]))
@@ -301,6 +307,10 @@ const sortTestModels = (models: ClaudeModel[]) => {
     return 0
   })
 }
+
+const grokTestModels = (models: ClaudeModel[]) => models.filter((model) => (
+  model.id.startsWith('grok-4.20-') || model.id.startsWith('grok-imagine-image')
+))
 
 // Load available models when modal opens
 watch(
@@ -329,13 +339,21 @@ const loadAvailableModels = async () => {
   selectedModelId.value = '' // Reset selection before loading
   try {
     const models = await adminAPI.accounts.getAvailableModels(props.account.id)
-    availableModels.value = props.account.platform === 'gemini' || props.account.platform === 'antigravity'
-      ? sortTestModels(models)
-      : models
+    if (props.account.platform === 'grok') {
+      availableModels.value = grokTestModels(models)
+    } else {
+      availableModels.value = props.account.platform === 'gemini' || props.account.platform === 'antigravity'
+        ? sortTestModels(models)
+        : models
+    }
     // Default selection by platform
     if (availableModels.value.length > 0) {
       if (props.account.platform === 'gemini') {
         selectedModelId.value = availableModels.value[0].id
+      } else if (props.account.platform === 'grok') {
+        const grokTextModel = availableModels.value.find((m) => m.id === defaultGrokTestModel)
+          || availableModels.value.find((m) => m.id.startsWith('grok-4.20-'))
+        selectedModelId.value = grokTextModel?.id || availableModels.value[0].id
       } else {
         // Try to select Sonnet as default, otherwise use first model
         const sonnetModel = availableModels.value.find((m) => m.id.includes('sonnet'))
@@ -491,6 +509,16 @@ const handleEvent = (event: {
       if (event.text) {
         streamingContent.value += event.text
         scrollToBottom()
+      }
+      break
+
+    case 'status':
+      if (event.text) {
+        if (streamingContent.value) {
+          addLine(streamingContent.value, 'text-green-300')
+          streamingContent.value = ''
+        }
+        addLine(event.text, 'text-cyan-300')
       }
       break
 

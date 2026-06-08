@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -212,6 +213,42 @@ func TestGroupHandlerEndpoints(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/admin/groups/2/api-keys", nil)
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestGroupHandlerAcceptsGrokPlatform(t *testing.T) {
+	router, adminSvc := setupAdminRouter()
+
+	body, err := json.Marshal(map[string]any{
+		"name":              "grok-group",
+		"platform":          service.PlatformGrok,
+		"subscription_type": "standard",
+		"rate_multiplier":   1,
+	})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/groups", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Len(t, adminSvc.createdGroups, 1)
+	require.Equal(t, service.PlatformGrok, adminSvc.createdGroups[0].Platform)
+
+	body, err = json.Marshal(map[string]any{
+		"name":     "grok-group-updated",
+		"platform": service.PlatformGrok,
+	})
+	require.NoError(t, err)
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/admin/groups/2", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Len(t, adminSvc.updatedGroups, 1)
+	require.Equal(t, service.PlatformGrok, adminSvc.updatedGroups[0].Platform)
 }
 
 func TestProxyHandlerEndpoints(t *testing.T) {

@@ -131,8 +131,16 @@ docs/*
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
+!docs/GROK_INTEGRATION.md
 .serena/
 .codex/
 frontend/coverage/
 aicodex
 output/
+
+# Local Grok verification artifacts
+grok_*.mp4
+tools/check_grok_sso*.py
+tools/test_*.js
+tools/*debug*.png
+tools/tokens_*.png

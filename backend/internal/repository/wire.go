@@ -107,6 +107,7 @@ var ProviderSet = wire.NewSet(
 	ProvideConcurrencyCache,
 	ProvideSessionLimitCache,
 	NewRPMCache,
+	NewGrokBudgetCache,
 	NewUserRPMCache,
 	NewUserMsgQueueCache,
 	NewDashboardCache,

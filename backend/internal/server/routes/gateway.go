@@ -26,6 +26,15 @@ func RegisterGatewayRoutes(
 	clientRequestID := middleware.ClientRequestID()
 	opsErrorLogger := handler.OpsErrorLoggerMiddleware(opsService)
 	endpointNorm := handler.InboundEndpointMiddleware()
+	unsupportedOpenAICompatibleAPI := func(c *gin.Context, name string) {
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{
+				"type":    "not_found_error",
+				"message": name + " API is not supported for this platform",
+			},
+		})
+	}
 
 	// 未分组 Key 拦截中间件（按协议格式区分错误响应）
 	requireGroupAnthropic := middleware.RequireGroupAssignment(settingService, middleware.AnthropicErrorWriter)
@@ -42,8 +51,19 @@ func RegisterGatewayRoutes(
 	{
 		// /v1/messages: auto-route based on group platform
 		gateway.POST("/messages", func(c *gin.Context) {
-			if getGroupPlatform(c) == service.PlatformOpenAI {
+			switch getGroupPlatform(c) {
+			case service.PlatformOpenAI:
 				h.OpenAIGateway.Messages(c)
+				return
+			case service.PlatformGrok:
+				service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+				c.JSON(http.StatusNotFound, gin.H{
+					"type": "error",
+					"error": gin.H{
+						"type":    "not_found_error",
+						"message": "Messages API is not supported for this platform",
+					},
+				})
 				return
 			}
 			h.Gateway.Messages(c)
@@ -83,8 +103,12 @@ func RegisterGatewayRoutes(
 		gateway.GET("/responses", h.OpenAIGateway.ResponsesWebSocket)
 		// OpenAI Chat Completions API: auto-route based on group platform
 		gateway.POST("/chat/completions", func(c *gin.Context) {
-			if getGroupPlatform(c) == service.PlatformOpenAI {
+			switch getGroupPlatform(c) {
+			case service.PlatformOpenAI:
 				h.OpenAIGateway.ChatCompletions(c)
+				return
+			case service.PlatformGrok:
+				h.GrokGateway.ChatCompletions(c)
 				return
 			}
 			h.Gateway.ChatCompletions(c)
@@ -103,30 +127,35 @@ func RegisterGatewayRoutes(
 			h.OpenAIGateway.Embeddings(c)
 		})
 		gateway.POST("/images/generations", func(c *gin.Context) {
+			switch getGroupPlatform(c) {
+			case service.PlatformOpenAI:
+				h.OpenAIGateway.Images(c)
+			case service.PlatformGrok:
+				h.GrokGateway.Images(c)
+			default:
+				unsupportedOpenAICompatibleAPI(c, "Images")
+			}
+		})
+		gateway.POST("/images/edits", func(c *gin.Context) {
 			if getGroupPlatform(c) != service.PlatformOpenAI {
-				service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
-				c.JSON(http.StatusNotFound, gin.H{
-					"error": gin.H{
-						"type":    "not_found_error",
-						"message": "Images API is not supported for this platform",
-					},
-				})
+				unsupportedOpenAICompatibleAPI(c, "Images")
 				return
 			}
 			h.OpenAIGateway.Images(c)
 		})
-		gateway.POST("/images/edits", func(c *gin.Context) {
-			if getGroupPlatform(c) != service.PlatformOpenAI {
-				service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
-				c.JSON(http.StatusNotFound, gin.H{
-					"error": gin.H{
-						"type":    "not_found_error",
-						"message": "Images API is not supported for this platform",
-					},
-				})
+		gateway.POST("/videos/generations", func(c *gin.Context) {
+			if getGroupPlatform(c) != service.PlatformGrok {
+				unsupportedOpenAICompatibleAPI(c, "Videos")
 				return
 			}
-			h.OpenAIGateway.Images(c)
+			h.GrokGateway.Videos(c)
+		})
+		gateway.POST("/videos", func(c *gin.Context) {
+			if getGroupPlatform(c) != service.PlatformGrok {
+				unsupportedOpenAICompatibleAPI(c, "Videos")
+				return
+			}
+			h.GrokGateway.Videos(c)
 		})
 	}
 
@@ -165,8 +194,12 @@ func RegisterGatewayRoutes(
 	}
 	// OpenAI Chat Completions API（不带v1前缀的别名）— auto-route based on group platform
 	r.POST("/chat/completions", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, func(c *gin.Context) {
-		if getGroupPlatform(c) == service.PlatformOpenAI {
+		switch getGroupPlatform(c) {
+		case service.PlatformOpenAI:
 			h.OpenAIGateway.ChatCompletions(c)
+			return
+		case service.PlatformGrok:
+			h.GrokGateway.ChatCompletions(c)
 			return
 		}
 		h.Gateway.ChatCompletions(c)
@@ -185,30 +218,35 @@ func RegisterGatewayRoutes(
 		h.OpenAIGateway.Embeddings(c)
 	})
 	r.POST("/images/generations", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, func(c *gin.Context) {
+		switch getGroupPlatform(c) {
+		case service.PlatformOpenAI:
+			h.OpenAIGateway.Images(c)
+		case service.PlatformGrok:
+			h.GrokGateway.Images(c)
+		default:
+			unsupportedOpenAICompatibleAPI(c, "Images")
+		}
+	})
+	r.POST("/images/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, func(c *gin.Context) {
 		if getGroupPlatform(c) != service.PlatformOpenAI {
-			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": gin.H{
-					"type":    "not_found_error",
-					"message": "Images API is not supported for this platform",
-				},
-			})
+			unsupportedOpenAICompatibleAPI(c, "Images")
 			return
 		}
 		h.OpenAIGateway.Images(c)
 	})
-	r.POST("/images/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, func(c *gin.Context) {
-		if getGroupPlatform(c) != service.PlatformOpenAI {
-			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": gin.H{
-					"type":    "not_found_error",
-					"message": "Images API is not supported for this platform",
-				},
-			})
+	r.POST("/videos/generations", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, func(c *gin.Context) {
+		if getGroupPlatform(c) != service.PlatformGrok {
+			unsupportedOpenAICompatibleAPI(c, "Videos")
 			return
 		}
-		h.OpenAIGateway.Images(c)
+		h.GrokGateway.Videos(c)
+	})
+	r.POST("/videos", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, func(c *gin.Context) {
+		if getGroupPlatform(c) != service.PlatformGrok {
+			unsupportedOpenAICompatibleAPI(c, "Videos")
+			return
+		}
+		h.GrokGateway.Videos(c)
 	})
 
 	// Antigravity 模型列表

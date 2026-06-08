@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	pkgerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/grok"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -1015,6 +1016,14 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		return
 	}
 
+	if platform == service.PlatformGrok {
+		c.JSON(http.StatusOK, gin.H{
+			"object": "list",
+			"data":   grok.DefaultModels,
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
 		"data":   claude.DefaultModels,
@@ -1042,6 +1051,10 @@ func writeCustomModelsList(c *gin.Context, platform string, modelIDs []string) {
 		writeOpenAIModelsList(c, modelIDs)
 		return
 	}
+	if platform == service.PlatformGrok {
+		writeGrokModelsList(c, modelIDs)
+		return
+	}
 	writeModelsList(c, modelIDs)
 }
 
@@ -1062,6 +1075,33 @@ func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
 			Object:      "model",
 			Created:     1704067200,
 			OwnedBy:     "openai",
+			Type:        "model",
+			DisplayName: modelID,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"object": "list",
+		"data":   models,
+	})
+}
+
+func writeGrokModelsList(c *gin.Context, modelIDs []string) {
+	defaultsByID := make(map[string]grok.Model, len(grok.DefaultModels))
+	for _, model := range grok.DefaultModels {
+		defaultsByID[model.ID] = model
+	}
+
+	models := make([]grok.Model, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		if model, ok := defaultsByID[modelID]; ok {
+			models = append(models, model)
+			continue
+		}
+		models = append(models, grok.Model{
+			ID:          modelID,
+			Object:      "model",
+			Created:     1704067200,
+			OwnedBy:     "xai",
 			Type:        "model",
 			DisplayName: modelID,
 		})
@@ -1140,6 +1180,8 @@ func defaultModelIDsForPlatform(platform string) []string {
 			ids = append(ids, model.ID)
 		}
 		return ids
+	case service.PlatformGrok:
+		return grok.DefaultModelIDs()
 	default:
 		ids := make([]string, 0, len(claude.DefaultModels))
 		for _, model := range claude.DefaultModels {

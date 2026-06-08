@@ -135,6 +135,16 @@ const xaiModels = [
   'grok-beta', 'grok-vision-beta'
 ]
 
+const grokWebModels = [
+  'grok-4.20-fast',
+  'grok-4.20-auto',
+  'grok-4.20-expert',
+  'grok-imagine-image-lite',
+  'grok-imagine-image',
+  'grok-imagine-image-pro',
+  'grok-imagine-video'
+]
+
 // Cohere
 const cohereModels = [
   'command-a-03-2025',
@@ -215,6 +225,7 @@ const allModelsList: string[] = [
   ...mistralModels,
   ...metaModels,
   ...xaiModels,
+  ...grokWebModels,
   ...cohereModels,
   ...yiModels,
   ...moonshotModels,
@@ -361,6 +372,7 @@ export function getModelsByPlatform(platform: string): string[] {
     case 'claude': return claudeModels
     case 'gemini': return geminiModels
     case 'antigravity': return antigravityModels
+    case 'grok': return grokWebModels
     case 'zhipu': return zhipuModels
     case 'qwen': return qwenModels
     case 'deepseek': return deepseekModels

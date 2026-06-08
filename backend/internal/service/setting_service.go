@@ -3707,6 +3707,8 @@ func (s *SettingService) GetFallbackModel(ctx context.Context, platform string) 
 	case PlatformAntigravity:
 		key = SettingKeyFallbackModelAntigravity
 		defaultModel = "gemini-2.5-pro"
+	case PlatformGrok:
+		return "grok-4.20-fast"
 	default:
 		return ""
 	}

@@ -57,6 +57,13 @@ tmp/
 temp/
 *.tmp
 
+# Local Grok verification artifacts
+grok_*.mp4
+tools/check_grok_sso*.py
+tools/test_*.js
+tools/*debug*.png
+tools/tokens_*.png
+
 # Deploy files (not needed in image)
 deploy/install.sh
 deploy/sub2api.service

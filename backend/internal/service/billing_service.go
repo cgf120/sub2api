@@ -109,6 +109,16 @@ const (
 	openAIGPT54LongContextInputThreshold   = 272000
 	openAIGPT54LongContextInputMultiplier  = 2.0
 	openAIGPT54LongContextOutputMultiplier = 1.5
+
+	grokTextInputPricePerToken     = 1.25e-6
+	grokTextOutputPricePerToken    = 2.50e-6
+	grokTextCacheReadPricePerToken = 0.20e-6
+	grokVideoOutputPricePerSecond  = 0.05
+	grokImageLitePricePerImage     = 0.02
+	grokImageNormalPricePerImage   = 0.02
+	grokImagePro1KPricePerImage    = 0.05
+	grokImagePro2KPricePerImage    = 0.07
+	grokImagePro4KPricePerImage    = 0.14
 )
 
 func normalizeBillingServiceTier(serviceTier string) string {
@@ -304,6 +314,23 @@ func (s *BillingService) initFallbackPricing() {
 		CacheReadPricePerTokenPriority: 0.3e-6,
 		SupportsCacheBreakdown:         false,
 	}
+
+	// Grok 4.20 Web text models. The model IDs below are sub2api-facing aliases
+	// for Grok web sessions; channel pricing can still override these defaults.
+	s.fallbackPrices["grok-4.20"] = &ModelPricing{
+		InputPricePerToken:         grokTextInputPricePerToken,
+		OutputPricePerToken:        grokTextOutputPricePerToken,
+		CacheReadPricePerToken:     grokTextCacheReadPricePerToken,
+		CacheCreationPricePerToken: grokTextInputPricePerToken,
+		SupportsCacheBreakdown:     false,
+	}
+	// Grok video is not token-based, but the current usage log has no video
+	// count field. GrokGatewayService records output units as seconds for this
+	// model so the token cost path can price video seconds without zero-costing.
+	s.fallbackPrices["grok-imagine-video"] = &ModelPricing{
+		OutputPricePerToken:    grokVideoOutputPricePerSecond,
+		SupportsCacheBreakdown: false,
+	}
 }
 
 // getFallbackPricing 根据模型系列获取回退价格
@@ -341,6 +368,13 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	}
 	if strings.Contains(modelLower, "gemini-3.1-pro") || strings.Contains(modelLower, "gemini-3-1-pro") {
 		return s.fallbackPrices["gemini-3.1-pro"]
+	}
+
+	switch modelLower {
+	case "grok-4.20-fast", "grok-4.20-auto", "grok-4.20-expert":
+		return s.fallbackPrices["grok-4.20"]
+	case "grok-imagine-video":
+		return s.fallbackPrices["grok-imagine-video"]
 	}
 
 	// OpenAI 仅匹配已知 GPT-5/Codex 族，避免未知 OpenAI 型号误计价。
@@ -911,6 +945,10 @@ func (s *BillingService) getImageUnitPrice(model string, imageSize string, group
 
 // getDefaultImagePrice 获取 LiteLLM 默认图片价格
 func (s *BillingService) getDefaultImagePrice(model string, imageSize string) float64 {
+	if price, ok := getDefaultGrokImagePrice(model, imageSize); ok {
+		return price
+	}
+
 	basePrice := 0.0
 
 	// 从 PricingService 获取 output_cost_per_image
@@ -935,4 +973,23 @@ func (s *BillingService) getDefaultImagePrice(model string, imageSize string) fl
 	}
 
 	return basePrice
+}
+
+func getDefaultGrokImagePrice(model string, imageSize string) (float64, bool) {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "grok-imagine-image-lite":
+		return grokImageLitePricePerImage, true
+	case "grok-imagine-image":
+		return grokImageNormalPricePerImage, true
+	case "grok-imagine-image-pro":
+		switch NormalizeImageBillingTierOrDefault(imageSize) {
+		case "1K":
+			return grokImagePro1KPricePerImage, true
+		case "2K":
+			return grokImagePro2KPricePerImage, true
+		case "4K":
+			return grokImagePro4KPricePerImage, true
+		}
+	}
+	return 0, false
 }
