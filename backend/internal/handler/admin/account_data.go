@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -66,8 +67,8 @@ type DataAccount struct {
 }
 
 type DataImportRequest struct {
-	Data                 DataPayload `json:"data"`
-	SkipDefaultGroupBind *bool       `json:"skip_default_group_bind"`
+	Data                 json.RawMessage `json:"data"`
+	SkipDefaultGroupBind *bool           `json:"skip_default_group_bind"`
 }
 
 type DataImportResult struct {
@@ -206,23 +207,23 @@ func (h *AccountHandler) ImportData(c *gin.Context) {
 		return
 	}
 
-	if err := validateDataHeader(req.Data); err != nil {
+	dataPayload, err := parseAccountDataImportPayload(req.Data)
+	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
 
 	executeAdminIdempotentJSON(c, "admin.accounts.import_data", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		return h.importData(ctx, req)
+		return h.importData(ctx, dataPayload, req.SkipDefaultGroupBind)
 	})
 }
 
-func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) (DataImportResult, error) {
+func (h *AccountHandler) importData(ctx context.Context, dataPayload DataPayload, skipDefaultGroupBindValue *bool) (DataImportResult, error) {
 	skipDefaultGroupBind := true
-	if req.SkipDefaultGroupBind != nil {
-		skipDefaultGroupBind = *req.SkipDefaultGroupBind
+	if skipDefaultGroupBindValue != nil {
+		skipDefaultGroupBind = *skipDefaultGroupBindValue
 	}
 
-	dataPayload := req.Data
 	result := DataImportResult{}
 
 	existingProxies, err := h.listAllProxies(ctx)
@@ -605,6 +606,217 @@ func parseIncludeProxies(c *gin.Context) (bool, error) {
 		return false, nil
 	default:
 		return true, fmt.Errorf("invalid include_proxies value: %s", raw)
+	}
+}
+
+type geminiTokensImportItem struct {
+	ID         string                       `json:"id"`
+	Platform   string                       `json:"platform"`
+	PlanType   string                       `json:"plan_type"`
+	Status     string                       `json:"status"`
+	Enabled    *bool                        `json:"enabled"`
+	Remark     string                       `json:"remark"`
+	Priority   int                          `json:"priority"`
+	Additional geminiTokensImportAdditional `json:"additional"`
+	Details    map[string]any               `json:"details"`
+}
+
+type geminiTokensImportAdditional struct {
+	Cookies map[string]any `json:"cookies"`
+	Email   string         `json:"email"`
+}
+
+var geminiTokensCookieNames = []string{
+	"__Secure-1PAPISID",
+	"__Secure-1PSID",
+	"__Secure-1PSIDTS",
+	"__Secure-1PSIDCC",
+	"__Secure-3PSID",
+	"__Secure-3PSIDTS",
+	"__Secure-3PSIDCC",
+	"COMPASS",
+	"NID",
+}
+
+func parseAccountDataImportPayload(raw json.RawMessage) (DataPayload, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return DataPayload{}, errors.New("data is required")
+	}
+
+	if strings.HasPrefix(trimmed, "[") {
+		payload, ok, err := convertGeminiTokensImport(raw)
+		if err != nil {
+			return DataPayload{}, err
+		}
+		if ok {
+			return payload, nil
+		}
+		return DataPayload{}, errors.New("unsupported account import array")
+	}
+
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return DataPayload{}, fmt.Errorf("invalid import data: %w", err)
+	}
+
+	if looksLikeGeminiTokensObject(object) {
+		payload, ok, err := convertGeminiTokensImport(raw)
+		if err != nil {
+			return DataPayload{}, err
+		}
+		if ok {
+			return payload, nil
+		}
+	}
+
+	var payload DataPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return DataPayload{}, fmt.Errorf("invalid import data: %w", err)
+	}
+	if err := validateDataHeader(payload); err != nil {
+		return DataPayload{}, err
+	}
+	return payload, nil
+}
+
+func looksLikeGeminiTokensObject(object map[string]json.RawMessage) bool {
+	if _, ok := object["additional"]; ok {
+		return true
+	}
+	var platform string
+	if rawPlatform, ok := object["platform"]; ok {
+		_ = json.Unmarshal(rawPlatform, &platform)
+	}
+	return strings.EqualFold(strings.TrimSpace(platform), "gemini_official")
+}
+
+func convertGeminiTokensImport(raw json.RawMessage) (DataPayload, bool, error) {
+	var items []geminiTokensImportItem
+	if strings.HasPrefix(strings.TrimSpace(string(raw)), "[") {
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return DataPayload{}, false, fmt.Errorf("invalid Gemini tokens export: %w", err)
+		}
+	} else {
+		var item geminiTokensImportItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return DataPayload{}, false, fmt.Errorf("invalid Gemini tokens export: %w", err)
+		}
+		items = []geminiTokensImportItem{item}
+	}
+
+	accounts := make([]DataAccount, 0, len(items))
+	seenNames := make(map[string]int, len(items))
+	for i := range items {
+		item := items[i]
+		if !looksLikeGeminiTokensItem(item) {
+			if len(items) == 1 {
+				return DataPayload{}, false, nil
+			}
+			return DataPayload{}, true, fmt.Errorf("Gemini tokens item %d is not a gemini_official cookie account", i+1)
+		}
+
+		cookies := extractGeminiTokensCookies(item.Additional.Cookies)
+		if cookies["__Secure-1PSID"] == "" || cookies["NID"] == "" {
+			return DataPayload{}, true, fmt.Errorf("Gemini tokens item %d missing __Secure-1PSID or NID", i+1)
+		}
+
+		name := defaultGeminiTokensAccountName(item, i+1)
+		name = uniqueImportAccountName(name, seenNames)
+		accounts = append(accounts, DataAccount{
+			Name:     name,
+			Platform: service.PlatformGemini,
+			Type:     service.AccountTypeOAuth,
+			Credentials: map[string]any{
+				"oauth_type": "web",
+				"tier_id":    geminiTokensPlanTypeToTierID(item.PlanType),
+				"cookies":    cookies,
+			},
+			Concurrency: 10,
+			Priority:    geminiTokensPriority(item.Priority),
+		})
+	}
+
+	if len(accounts) == 0 {
+		return DataPayload{}, true, errors.New("Gemini tokens export contains no accounts")
+	}
+
+	return DataPayload{
+		Type:       dataType,
+		Version:    dataVersion,
+		ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		Proxies:    []DataProxy{},
+		Accounts:   accounts,
+	}, true, nil
+}
+
+func looksLikeGeminiTokensItem(item geminiTokensImportItem) bool {
+	if strings.EqualFold(strings.TrimSpace(item.Platform), "gemini_official") {
+		return true
+	}
+	return len(item.Additional.Cookies) > 0
+}
+
+func extractGeminiTokensCookies(source map[string]any) map[string]string {
+	cookies := make(map[string]string)
+	for _, key := range geminiTokensCookieNames {
+		value, ok := source[key]
+		if !ok {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		text = strings.TrimSpace(text)
+		if text != "" {
+			cookies[key] = text
+		}
+	}
+	return cookies
+}
+
+func defaultGeminiTokensAccountName(item geminiTokensImportItem, sequence int) string {
+	if name := strings.TrimSpace(item.Remark); name != "" {
+		return name
+	}
+	if email := strings.TrimSpace(item.Additional.Email); email != "" {
+		return email
+	}
+	if id := strings.TrimSpace(item.ID); id != "" {
+		return "gemini-web-" + id
+	}
+	return fmt.Sprintf("gemini-web-%d", sequence)
+}
+
+func uniqueImportAccountName(name string, seen map[string]int) string {
+	normalized := strings.TrimSpace(name)
+	if normalized == "" {
+		normalized = "gemini-web"
+	}
+	count := seen[normalized]
+	seen[normalized] = count + 1
+	if count == 0 {
+		return normalized
+	}
+	return fmt.Sprintf("%s #%d", normalized, count+1)
+}
+
+func geminiTokensPriority(priority int) int {
+	if priority > 0 {
+		return priority
+	}
+	return 1
+}
+
+func geminiTokensPlanTypeToTierID(planType string) string {
+	switch strings.ToLower(strings.TrimSpace(planType)) {
+	case "ultra", "google_ai_ultra", "google-one-ultra", "google_one_ultra":
+		return service.GeminiTierGoogleAIUltra
+	case "plus", "pro", "premium", "paid", "google_ai_pro", "google-one-pro", "google_one_pro":
+		return service.GeminiTierGoogleAIPro
+	default:
+		return service.GeminiTierGoogleOneFree
 	}
 }
 

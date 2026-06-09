@@ -638,14 +638,39 @@
 
           <div v-if="geminiOAuthType === 'web'" class="mt-4 space-y-4 rounded-lg border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-800/40 dark:bg-emerald-900/10">
             <div>
-              <label class="input-label">完整 Cookie JSON</label>
+              <div class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <label class="input-label mb-0">完整 Cookie JSON</label>
+                <div class="flex min-w-0 items-center gap-2">
+                  <span
+                    v-if="geminiWebCookieFileName"
+                    class="truncate text-xs text-gray-500 dark:text-gray-400"
+                  >
+                    {{ geminiWebCookieFileName }}
+                  </span>
+                  <button
+                    type="button"
+                    class="btn btn-secondary shrink-0"
+                    @click="openGeminiWebCookieFilePicker"
+                  >
+                    <Icon name="upload" size="sm" />
+                    导入 JSON
+                  </button>
+                </div>
+              </div>
+              <input
+                ref="geminiWebCookieFileInput"
+                type="file"
+                accept="application/json,.json"
+                class="hidden"
+                @change="handleGeminiWebCookieFile"
+              />
               <textarea
                 v-model="geminiWebCookies"
                 rows="8"
                 class="input font-mono"
-                placeholder='{"cookies":{"__Secure-1PSID":"...","NID":"...","__Secure-1PSIDTS":"...","__Secure-1PSIDCC":"...","COMPASS":"..."}}'
+                placeholder='{"cookies":{"__Secure-1PSID":"...","NID":"...","__Secure-1PSIDTS":"...","__Secure-1PSIDCC":"...","COMPASS":"..."}} 或 {"additional":{"cookies":{...}},"plan_type":"free"}'
               ></textarea>
-              <p class="input-hint">仅支持 JSON。最少包含 __Secure-1PSID 和 NID 时会按 free 默认；包含更多 Cookie 时可用于自动识别等级。</p>
+              <p class="input-hint">仅支持 JSON。可粘贴纯 Cookie map、{"cookies":{...}}、tokens 单条 JSON；tokens 数组请用账号列表的“导入数据”。</p>
             </div>
           </div>
 
@@ -3490,6 +3515,8 @@ const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
 const geminiWebCookies = ref('')
+const geminiWebCookieFileInput = ref<HTMLInputElement | null>(null)
+const geminiWebCookieFileName = ref('')
 const grokSSO = ref('')
 const grokUserAgent = ref('')
 const grokExtraCookies = ref('')
@@ -4018,6 +4045,10 @@ watch(
     }
     if (newPlatform !== 'gemini') {
       geminiWebCookies.value = ''
+      geminiWebCookieFileName.value = ''
+      if (geminiWebCookieFileInput.value) {
+        geminiWebCookieFileInput.value.value = ''
+      }
     }
     if (newPlatform === 'grok') {
       accountCategory.value = 'oauth-based'
@@ -4395,6 +4426,10 @@ const resetForm = () => {
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
   geminiWebCookies.value = ''
+  geminiWebCookieFileName.value = ''
+  if (geminiWebCookieFileInput.value) {
+    geminiWebCookieFileInput.value.value = ''
+  }
   grokSSO.value = ''
   grokUserAgent.value = ''
   grokExtraCookies.value = ''
@@ -4650,7 +4685,60 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
-const parseGeminiWebCookieJson = (): Record<string, string> | null => {
+type GeminiWebParsedCookieJson = {
+  cookies: Record<string, string>
+  tierId?: 'google_one_free' | 'google_ai_pro' | 'google_ai_ultra'
+}
+
+const normalizeGeminiWebPlanType = (value: unknown): GeminiWebParsedCookieJson['tierId'] | undefined => {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  switch (value.trim().toLowerCase()) {
+    case 'ultra':
+    case 'google_ai_ultra':
+    case 'google-one-ultra':
+    case 'google_one_ultra':
+      return 'google_ai_ultra'
+    case 'plus':
+    case 'pro':
+    case 'premium':
+    case 'paid':
+    case 'google_ai_pro':
+    case 'google-one-pro':
+    case 'google_one_pro':
+      return 'google_ai_pro'
+    default:
+      return 'google_one_free'
+  }
+}
+
+const extractGeminiWebCookieInput = (
+  value: unknown
+): { cookieSource: Record<string, unknown>; tierId?: GeminiWebParsedCookieJson['tierId'] } | null => {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const parsed = extractGeminiWebCookieInput(item)
+      if (parsed) return parsed
+    }
+    return null
+  }
+
+  if (!isPlainObject(value)) {
+    return null
+  }
+
+  const tierId = normalizeGeminiWebPlanType(value.plan_type)
+  if (isPlainObject(value.cookies)) {
+    return { cookieSource: value.cookies, tierId }
+  }
+
+  if (isPlainObject(value.additional) && isPlainObject(value.additional.cookies)) {
+    return { cookieSource: value.additional.cookies, tierId }
+  }
+
+  return { cookieSource: value, tierId }
+}
+
+const parseGeminiWebCookieJson = (): GeminiWebParsedCookieJson | null => {
   const raw = geminiWebCookies.value.trim()
   if (!raw) {
     appStore.showError('请填写完整 Cookie JSON')
@@ -4665,15 +4753,15 @@ const parseGeminiWebCookieJson = (): Record<string, string> | null => {
     return null
   }
 
-  if (!isPlainObject(parsed)) {
-    appStore.showError('Cookie JSON 必须是对象')
+  const extracted = extractGeminiWebCookieInput(parsed)
+  if (!extracted) {
+    appStore.showError('Cookie JSON 必须是对象或 tokens 数组')
     return null
   }
 
-  const cookieSource = isPlainObject(parsed.cookies) ? parsed.cookies : parsed
   const cookies: Record<string, string> = {}
   for (const key of geminiWebCookieKeys) {
-    const value = cookieSource[key]
+    const value = extracted.cookieSource[key]
     if (typeof value === 'string' && value.trim()) {
       cookies[key] = value.trim()
     }
@@ -4683,7 +4771,23 @@ const parseGeminiWebCookieJson = (): Record<string, string> | null => {
     appStore.showError('Cookie JSON 至少需要包含 __Secure-1PSID 和 NID')
     return null
   }
-  return cookies
+  return { cookies, tierId: extracted.tierId }
+}
+
+const openGeminiWebCookieFilePicker = () => {
+  geminiWebCookieFileInput.value?.click()
+}
+
+const handleGeminiWebCookieFile = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  try {
+    geminiWebCookieFileName.value = file.name
+    geminiWebCookies.value = await file.text()
+  } finally {
+    input.value = ''
+  }
 }
 
 const handleVertexServiceAccountFile = async (event: Event) => {
@@ -4826,15 +4930,15 @@ const handleSubmit = async () => {
       appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
       return
     }
-    const cookies = parseGeminiWebCookieJson()
-    if (!cookies) {
+    const parsedCookieInput = parseGeminiWebCookieJson()
+    if (!parsedCookieInput) {
       return
     }
 
     const credentials: Record<string, unknown> = {
       oauth_type: 'web',
-      tier_id: geminiSelectedTier.value || 'google_one_free',
-      cookies
+      tier_id: parsedCookieInput.tierId || geminiSelectedTier.value || 'google_one_free',
+      cookies: parsedCookieInput.cookies
     }
 
     await createAccountAndFinish('gemini', 'oauth', credentials)

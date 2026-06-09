@@ -275,3 +275,73 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 	require.Len(t, adminSvc.createdAccounts, 1)
 	require.True(t, adminSvc.createdAccounts[0].SkipDefaultGroupBind)
 }
+
+func TestImportDataAcceptsGeminiTokensExport(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+
+	dataPayload := map[string]any{
+		"data": []map[string]any{
+			{
+				"id":        "token-a",
+				"platform":  "gemini_official",
+				"plan_type": "free",
+				"priority":  7,
+				"remark":    "gemini-free",
+				"additional": map[string]any{
+					"email": "free@example.com",
+					"cookies": map[string]any{
+						"__Secure-1PSID":    "psid-a",
+						"NID":               "nid-a",
+						"COMPASS":           "compass-a",
+						"token_hash":        "should-not-import",
+						"__Secure-3PSIDCC":  "3psidcc-a",
+						"__Secure-1PSIDCC":  "1psidcc-a",
+						"__Secure-1PAPISID": "papisid-a",
+					},
+				},
+			},
+			{
+				"id":        "token-b",
+				"platform":  "gemini_official",
+				"plan_type": "plus",
+				"additional": map[string]any{
+					"email": "pro@example.com",
+					"cookies": map[string]any{
+						"__Secure-1PSID": "psid-b",
+						"NID":            "nid-b",
+					},
+				},
+			},
+		},
+		"skip_default_group_bind": true,
+	}
+
+	body, _ := json.Marshal(dataPayload)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	require.Len(t, adminSvc.createdAccounts, 2)
+	first := adminSvc.createdAccounts[0]
+	require.Equal(t, "gemini-free", first.Name)
+	require.Equal(t, service.PlatformGemini, first.Platform)
+	require.Equal(t, service.AccountTypeOAuth, first.Type)
+	require.Equal(t, 10, first.Concurrency)
+	require.Equal(t, 7, first.Priority)
+	require.True(t, first.SkipDefaultGroupBind)
+	require.Equal(t, "web", first.Credentials["oauth_type"])
+	require.Equal(t, service.GeminiTierGoogleOneFree, first.Credentials["tier_id"])
+	firstCookies, ok := first.Credentials["cookies"].(map[string]string)
+	require.True(t, ok)
+	require.Equal(t, "psid-a", firstCookies["__Secure-1PSID"])
+	require.Equal(t, "nid-a", firstCookies["NID"])
+	require.Equal(t, "compass-a", firstCookies["COMPASS"])
+	require.NotContains(t, firstCookies, "token_hash")
+
+	second := adminSvc.createdAccounts[1]
+	require.Equal(t, "pro@example.com", second.Name)
+	require.Equal(t, service.GeminiTierGoogleAIPro, second.Credentials["tier_id"])
+	require.Equal(t, 1, second.Priority)
+}

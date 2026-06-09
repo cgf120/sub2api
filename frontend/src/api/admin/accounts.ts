@@ -622,7 +622,7 @@ export async function exportData(options?: {
 }
 
 export async function importData(payload: {
-  data: AdminDataPayload
+  data: unknown
   skip_default_group_bind?: boolean
 }): Promise<AdminDataImportResult> {
   const { data } = await apiClient.post<AdminDataImportResult>('/admin/accounts/data', {

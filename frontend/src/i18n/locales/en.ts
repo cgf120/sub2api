@@ -3010,7 +3010,7 @@ export default {
       dataExported: 'Data exported successfully',
       dataExportFailed: 'Failed to export data',
       dataImportTitle: 'Import Data',
-      dataImportHint: 'Upload the exported JSON file to import accounts and proxies.',
+      dataImportHint: 'Upload the exported JSON file to import accounts and proxies; Gemini also accepts tokens gemini_official JSON exports.',
       dataImportWarning: 'Import will create new accounts/proxies; groups must be bound manually. Ensure existing data does not conflict.',
       dataImportFile: 'Data file',
       dataImportButton: 'Start Import',
