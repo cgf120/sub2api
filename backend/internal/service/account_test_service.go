@@ -881,6 +881,10 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.Flush()
 
+	if account.IsGeminiWebOAuth() {
+		return s.testGeminiWebAccountConnection(c, account, testModelID, prompt)
+	}
+
 	// Create test payload (Gemini format)
 	payload := createGeminiTestPayload(testModelID, prompt)
 
@@ -925,6 +929,91 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 
 	// Process SSE stream
 	return s.processGeminiStream(c, resp.Body)
+}
+
+func (s *AccountTestService) testGeminiWebAccountConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
+	if s.httpUpstream == nil {
+		return s.sendErrorAndEnd(c, "HTTP upstream not configured")
+	}
+	if strings.TrimSpace(prompt) == "" {
+		if isImageGenerationModel(modelID) {
+			prompt = defaultGeminiImageTestPrompt
+		} else {
+			prompt = defaultGeminiTextTestPrompt
+		}
+	}
+
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: modelID})
+
+	if geminiWebIsVideoRequest(modelID) && !geminiWebAccountCanGenerateVideo(account) {
+		return s.sendErrorAndEnd(c, geminiWebVideoTierError(account).Error())
+	}
+
+	s.sendEvent(c, TestEvent{Type: "status", Text: "正在初始化 Gemini Web Cookie 会话"})
+
+	client, err := newGeminiWebOfficialClient(account, s.httpUpstream)
+	if err != nil {
+		return s.sendErrorAndEnd(c, err.Error())
+	}
+	if err := client.Init(c.Request.Context()); err != nil {
+		return s.sendErrorAndEnd(c, err.Error())
+	}
+
+	if isImageGenerationModel(modelID) {
+		s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 Gemini Web 测试图片生成"})
+		result, err := client.GenerateImage(c.Request.Context(), prompt)
+		if err != nil {
+			return s.sendErrorAndEnd(c, err.Error())
+		}
+		imageURL := ""
+		if result != nil {
+			imageURL = firstNonEmptyString(result.ImageURL, result.ImageID)
+		}
+		if imageURL == "" {
+			return s.sendErrorAndEnd(c, "No image URL returned from Gemini Web")
+		}
+		if result == nil || strings.TrimSpace(result.ImageURL) == "" {
+			return s.sendErrorAndEnd(c, "Gemini Web image did not return a downloadable image URL")
+		}
+		previewURL, mimeType, err := client.fetchGeminiImageDataURL(c.Request.Context(), result.ImageURL)
+		if err != nil || previewURL == "" {
+			return s.sendErrorAndEnd(c, "Gemini Web image URL was generated but could not be downloaded by the backend")
+		}
+		if mimeType == "" {
+			mimeType = "image/png"
+		}
+		result.ImageURL = previewURL
+		s.sendEvent(c, TestEvent{Type: "content", Text: geminiWebResultContentJSON(result, "image") + "\n"})
+		s.sendEvent(c, TestEvent{
+			Type:     "image",
+			ImageURL: previewURL,
+			MimeType: mimeType,
+		})
+	} else if geminiWebIsVideoRequest(modelID) {
+		s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 Gemini Web 生成视频，可能需要数分钟"})
+		result, err := client.GenerateVideo(c.Request.Context(), prompt)
+		if err != nil {
+			return s.sendErrorAndEnd(c, err.Error())
+		}
+		if result == nil || result.VideoURL == "" {
+			return s.sendErrorAndEnd(c, "No video URL returned from Gemini Web")
+		}
+		s.sendEvent(c, TestEvent{Type: "content", Text: geminiWebResultContentJSON(result, "video") + "\n"})
+	} else {
+		s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 Gemini Web 测试文本生成"})
+		result, err := client.GenerateText(c.Request.Context(), prompt)
+		if err != nil {
+			return s.sendErrorAndEnd(c, err.Error())
+		}
+		if result == nil || strings.TrimSpace(result.Text) == "" {
+			return s.sendErrorAndEnd(c, "No text returned from Gemini Web")
+		}
+		s.sendEvent(c, TestEvent{Type: "content", Text: result.Text + "\n"})
+	}
+
+	s.sendEvent(c, TestEvent{Type: "status", Text: "Gemini Web Cookie 验证成功"})
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
 }
 
 // routeAntigravityTest 路由 Antigravity 账号的测试请求。

@@ -227,6 +227,51 @@ func TestClaudeTokenRefresher_CanRefresh(t *testing.T) {
 	}
 }
 
+func TestGeminiTokenRefresher_CanRefresh(t *testing.T) {
+	refresher := &GeminiTokenRefresher{}
+
+	tests := []struct {
+		name        string
+		platform    string
+		accType     string
+		credentials map[string]any
+		want        bool
+	}{
+		{
+			name:     "gemini oauth - can refresh",
+			platform: PlatformGemini,
+			accType:  AccountTypeOAuth,
+			want:     true,
+		},
+		{
+			name:     "gemini web oauth - cannot refresh",
+			platform: PlatformGemini,
+			accType:  AccountTypeOAuth,
+			credentials: map[string]any{
+				"oauth_type": "web",
+			},
+			want: false,
+		},
+		{
+			name:     "gemini apikey - cannot refresh",
+			platform: PlatformGemini,
+			accType:  AccountTypeAPIKey,
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account := &Account{
+				Platform:    tt.platform,
+				Type:        tt.accType,
+				Credentials: tt.credentials,
+			}
+			require.Equal(t, tt.want, refresher.CanRefresh(account))
+		})
+	}
+}
+
 func TestOpenAITokenRefresher_CanRefresh(t *testing.T) {
 	refresher := &OpenAITokenRefresher{}
 

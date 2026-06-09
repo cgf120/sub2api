@@ -7,6 +7,12 @@ var SensitiveCredentialKeys = []string{
 	"access_token", "refresh_token", "id_token",
 	// API Key 类
 	"api_key", "session_key", "cookie",
+	// Gemini Web Cookie
+	"google_token", "cookies",
+	"__Secure-1PAPISID",
+	"__Secure-1PSID", "__Secure-1PSIDTS", "__Secure-1PSIDCC",
+	"__Secure-3PSID", "__Secure-3PSIDTS", "__Secure-3PSIDCC",
+	"COMPASS", "NID",
 	// 云服务凭据
 	"aws_secret_access_key", "aws_session_token",
 	"service_account_json", "service_account", "private_key",

@@ -17,6 +17,10 @@ func TestRedactCredentials_StripsSensitiveKeysAndReportsStatus(t *testing.T) {
 		"refresh_token":         "rt-secret",
 		"access_token":          "at-secret",
 		"api_key":               "sk-secret",
+		"google_token":          "psid::nid",
+		"cookies":               "__Secure-1PSID=secret; NID=secret",
+		"__Secure-1PSID":        "psid-secret",
+		"NID":                   "nid-secret",
 		"aws_secret_access_key": "aws-secret",
 		"service_account_json":  map[string]any{"private_key": "..."},
 		"private_key":           "raw-key",
@@ -32,6 +36,10 @@ func TestRedactCredentials_StripsSensitiveKeysAndReportsStatus(t *testing.T) {
 	require.NotContains(t, out, "refresh_token")
 	require.NotContains(t, out, "access_token")
 	require.NotContains(t, out, "api_key")
+	require.NotContains(t, out, "google_token")
+	require.NotContains(t, out, "cookies")
+	require.NotContains(t, out, "__Secure-1PSID")
+	require.NotContains(t, out, "NID")
 	require.NotContains(t, out, "aws_secret_access_key")
 	require.NotContains(t, out, "service_account_json")
 	require.NotContains(t, out, "private_key")
@@ -44,6 +52,10 @@ func TestRedactCredentials_StripsSensitiveKeysAndReportsStatus(t *testing.T) {
 	require.True(t, status["has_refresh_token"])
 	require.True(t, status["has_access_token"])
 	require.True(t, status["has_api_key"])
+	require.True(t, status["has_google_token"])
+	require.True(t, status["has_cookies"])
+	require.True(t, status["has___Secure-1PSID"])
+	require.True(t, status["has_NID"])
 	require.True(t, status["has_aws_secret_access_key"])
 	require.True(t, status["has_service_account_json"])
 	require.True(t, status["has_private_key"])
@@ -82,6 +94,11 @@ func TestRedactCredentials_AllKnownSensitiveKeys(t *testing.T) {
 	keys := []string{
 		"access_token", "refresh_token", "id_token",
 		"api_key", "session_key", "cookie",
+		"google_token", "cookies",
+		"__Secure-1PAPISID",
+		"__Secure-1PSID", "__Secure-1PSIDTS", "__Secure-1PSIDCC",
+		"__Secure-3PSID", "__Secure-3PSIDTS", "__Secure-3PSIDCC",
+		"COMPASS", "NID",
 		"aws_secret_access_key", "aws_session_token",
 		"service_account_json", "service_account", "private_key",
 	}

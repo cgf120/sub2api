@@ -59,6 +59,9 @@ func (p *GeminiTokenProvider) GetAccessToken(ctx context.Context, account *Accou
 	if account.Type == AccountTypeServiceAccount {
 		return p.getServiceAccountAccessToken(ctx, account)
 	}
+	if account.IsGeminiWebOAuth() {
+		return "", errors.New("gemini web cookie accounts do not use OAuth access tokens")
+	}
 
 	cacheKey := GeminiTokenCacheKey(account)
 

@@ -19,7 +19,7 @@ func (r *GeminiTokenRefresher) CacheKey(account *Account) string {
 }
 
 func (r *GeminiTokenRefresher) CanRefresh(account *Account) bool {
-	return account.Platform == PlatformGemini && account.Type == AccountTypeOAuth
+	return account.Platform == PlatformGemini && account.Type == AccountTypeOAuth && !account.IsGeminiWebOAuth()
 }
 
 func (r *GeminiTokenRefresher) NeedsRefresh(account *Account, refreshWindow time.Duration) bool {

@@ -207,7 +207,7 @@ func (a *Account) IsGeminiCodeAssist() bool {
 }
 
 func (a *Account) CanGetUsage() bool {
-	return a.Type == AccountTypeOAuth
+	return a.Type == AccountTypeOAuth && !a.IsGeminiWebOAuth()
 }
 
 func (a *Account) GetCredential(key string) string {

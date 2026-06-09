@@ -519,6 +519,9 @@ func (s *GeminiMessagesCompatService) SelectAccountForAIStudioEndpoints(ctx cont
 			}
 			return 9
 		case AccountTypeOAuth:
+			if a.IsGeminiWebOAuth() {
+				return 999
+			}
 			if strings.TrimSpace(a.GetCredential("project_id")) == "" {
 				return 1
 			}

@@ -498,7 +498,7 @@
         <!-- OAuth Type Selection (only show when oauth-based is selected) -->
         <div v-if="accountCategory === 'oauth-based'" class="mt-4">
           <label class="input-label">{{ t('admin.accounts.oauth.gemini.oauthTypeLabel') }}</label>
-          <div class="mt-2 grid grid-cols-2 gap-3">
+          <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <!-- Google One OAuth -->
             <button
               type="button"
@@ -537,6 +537,45 @@
                     class="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
                   >
                     无需 GCP
+                  </span>
+                </div>
+              </div>
+            </button>
+
+            <!-- Gemini Web Cookie -->
+            <button
+              type="button"
+              @click="handleSelectGeminiOAuthType('web')"
+              :class="[
+                'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+                geminiOAuthType === 'web'
+                  ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20'
+                  : 'border-gray-200 hover:border-emerald-300 dark:border-dark-600 dark:hover:border-emerald-700'
+              ]"
+            >
+              <div
+                :class="[
+                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                  geminiOAuthType === 'web'
+                    ? 'bg-emerald-500 text-white'
+                    : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+                ]"
+              >
+                <Icon name="key" size="sm" />
+              </div>
+              <div class="min-w-0">
+                <span class="block text-sm font-medium text-gray-900 dark:text-white">
+                  Web Cookie
+                </span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">
+                  Gemini 官网会话，支持文本和 Veo 视频
+                </span>
+                <div class="mt-2 flex flex-wrap gap-1">
+                  <span class="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                    Cookie JSON
+                  </span>
+                  <span class="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                    非 REST 官方 API
                   </span>
                 </div>
               </div>
@@ -597,8 +636,21 @@
             </button>
           </div>
 
+          <div v-if="geminiOAuthType === 'web'" class="mt-4 space-y-4 rounded-lg border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-800/40 dark:bg-emerald-900/10">
+            <div>
+              <label class="input-label">完整 Cookie JSON</label>
+              <textarea
+                v-model="geminiWebCookies"
+                rows="8"
+                class="input font-mono"
+                placeholder='{"cookies":{"__Secure-1PSID":"...","NID":"...","__Secure-1PSIDTS":"...","__Secure-1PSIDCC":"...","COMPASS":"..."}}'
+              ></textarea>
+              <p class="input-hint">仅支持 JSON。最少包含 __Secure-1PSID 和 NID 时会按 free 默认；包含更多 Cookie 时可用于自动识别等级。</p>
+            </div>
+          </div>
+
           <!-- Advanced Options Toggle -->
-          <div class="mt-3">
+          <div v-if="geminiOAuthType !== 'web'" class="mt-3">
             <button
               type="button"
               @click="showAdvancedOAuth = !showAdvancedOAuth"
@@ -618,7 +670,7 @@
           </div>
 
           <!-- Custom OAuth Client (Advanced) -->
-          <div v-if="showAdvancedOAuth" class="mt-3 group relative">
+          <div v-if="showAdvancedOAuth && geminiOAuthType !== 'web'" class="mt-3 group relative">
             <button
               type="button"
               :disabled="!geminiAIStudioOAuthEnabled"
@@ -698,7 +750,7 @@
           <label class="input-label">{{ t('admin.accounts.gemini.tier.label') }}</label>
           <div class="mt-2">
             <select
-              v-if="geminiOAuthType === 'google_one'"
+              v-if="geminiOAuthType === 'google_one' || geminiOAuthType === 'web'"
               v-model="geminiTierGoogleOne"
               class="input"
             >
@@ -3428,6 +3480,8 @@ interface TempUnschedRuleForm {
   description: string
 }
 
+type GeminiOAuthType = 'code_assist' | 'google_one' | 'ai_studio' | 'web'
+
 // State
 const step = ref(1)
 const submitting = ref(false)
@@ -3435,6 +3489,7 @@ const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_acco
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
+const geminiWebCookies = ref('')
 const grokSSO = ref('')
 const grokUserAgent = ref('')
 const grokExtraCookies = ref('')
@@ -3553,7 +3608,7 @@ const getModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-m
 const getOpenAICompactModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-openai-compact-model-mapping')
 const getAntigravityModelMappingKey = createStableObjectKeyResolver<ModelMapping>('create-antigravity-model-mapping')
 const getTempUnschedRuleKey = createStableObjectKeyResolver<TempUnschedRuleForm>('create-temp-unsched-rule')
-const geminiOAuthType = ref<'code_assist' | 'google_one' | 'ai_studio'>('google_one')
+const geminiOAuthType = ref<GeminiOAuthType>('google_one')
 const geminiAIStudioOAuthEnabled = ref(false)
 const openAICompactModeOptions = computed(() => [
   { value: 'auto', label: t('admin.accounts.openai.compactModeAuto') },
@@ -3692,6 +3747,7 @@ const geminiSelectedTier = computed(() => {
   if (accountCategory.value === 'apikey') return geminiTierAIStudio.value
   switch (geminiOAuthType.value) {
     case 'google_one':
+    case 'web':
       return geminiTierGoogleOne.value
     case 'code_assist':
       return geminiTierGcp.value
@@ -3810,6 +3866,9 @@ const isOAuthFlow = computed(() => {
   }
   // Bedrock 类型不需要 OAuth 流程
   if (form.platform === 'anthropic' && accountCategory.value === 'bedrock') {
+    return false
+  }
+  if (form.platform === 'gemini' && accountCategory.value === 'oauth-based' && geminiOAuthType.value === 'web') {
     return false
   }
   return accountCategory.value === 'oauth-based'
@@ -3957,6 +4016,9 @@ watch(
       anthropicPassthroughEnabled.value = false
       webSearchEmulationMode.value = 'default'
     }
+    if (newPlatform !== 'gemini') {
+      geminiWebCookies.value = ''
+    }
     if (newPlatform === 'grok') {
       accountCategory.value = 'oauth-based'
       addMethod.value = 'oauth'
@@ -4007,12 +4069,15 @@ watch(
   { immediate: true }
 )
 
-const handleSelectGeminiOAuthType = (oauthType: 'code_assist' | 'google_one' | 'ai_studio') => {
+const handleSelectGeminiOAuthType = (oauthType: GeminiOAuthType) => {
   if (oauthType === 'ai_studio' && !geminiAIStudioOAuthEnabled.value) {
     appStore.showError(t('admin.accounts.oauth.gemini.aiStudioNotConfigured'))
     return
   }
   geminiOAuthType.value = oauthType
+  if (oauthType === 'web') {
+    showAdvancedOAuth.value = false
+  }
 }
 
 // Auto-fill related models when switching to whitelist mode or changing platform
@@ -4329,6 +4394,7 @@ const resetForm = () => {
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
+  geminiWebCookies.value = ''
   grokSSO.value = ''
   grokUserAgent.value = ''
   grokExtraCookies.value = ''
@@ -4568,6 +4634,58 @@ const applyVertexServiceAccountJson = (value: string) => {
 
 const parseVertexServiceAccountJson = () => applyVertexServiceAccountJson(vertexServiceAccountJson.value)
 
+const geminiWebCookieKeys = [
+  '__Secure-1PAPISID',
+  '__Secure-1PSID',
+  '__Secure-1PSIDTS',
+  '__Secure-1PSIDCC',
+  '__Secure-3PSID',
+  '__Secure-3PSIDTS',
+  '__Secure-3PSIDCC',
+  'COMPASS',
+  'NID'
+] as const
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+const parseGeminiWebCookieJson = (): Record<string, string> | null => {
+  const raw = geminiWebCookies.value.trim()
+  if (!raw) {
+    appStore.showError('请填写完整 Cookie JSON')
+    return null
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    appStore.showError('Cookie 必须是 JSON 格式，不支持 __Secure-1PSID::NID 或 Cookie header')
+    return null
+  }
+
+  if (!isPlainObject(parsed)) {
+    appStore.showError('Cookie JSON 必须是对象')
+    return null
+  }
+
+  const cookieSource = isPlainObject(parsed.cookies) ? parsed.cookies : parsed
+  const cookies: Record<string, string> = {}
+  for (const key of geminiWebCookieKeys) {
+    const value = cookieSource[key]
+    if (typeof value === 'string' && value.trim()) {
+      cookies[key] = value.trim()
+    }
+  }
+
+  if (!cookies['__Secure-1PSID'] || !cookies.NID) {
+    appStore.showError('Cookie JSON 至少需要包含 __Secure-1PSID 和 NID')
+    return null
+  }
+  return cookies
+}
+
 const handleVertexServiceAccountFile = async (event: Event) => {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -4703,6 +4821,26 @@ const handleSubmit = async () => {
     return
   }
 
+  if (form.platform === 'gemini' && accountCategory.value === 'oauth-based' && geminiOAuthType.value === 'web') {
+    if (!form.name.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+      return
+    }
+    const cookies = parseGeminiWebCookieJson()
+    if (!cookies) {
+      return
+    }
+
+    const credentials: Record<string, unknown> = {
+      oauth_type: 'web',
+      tier_id: geminiSelectedTier.value || 'google_one_free',
+      cookies
+    }
+
+    await createAccountAndFinish('gemini', 'oauth', credentials)
+    return
+  }
+
   if ((form.platform === 'gemini' || form.platform === 'anthropic') && accountCategory.value === 'service_account') {
     if (!form.name.trim()) {
       appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
@@ -4831,6 +4969,7 @@ const handleGenerateUrl = async () => {
   if (form.platform === 'openai') {
     await openaiOAuth.generateAuthUrl(form.proxy_id)
   } else if (form.platform === 'gemini') {
+    if (geminiOAuthType.value === 'web') return
     await geminiOAuth.generateAuthUrl(
       form.proxy_id,
       oauthFlowRef.value?.projectId,
@@ -5332,6 +5471,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
 
 // Gemini OAuth 授权码兑换
 const handleGeminiExchange = async (authCode: string) => {
+  if (geminiOAuthType.value === 'web') return
   if (!authCode.trim() || !geminiOAuth.sessionId.value) return
 
   geminiOAuth.loading.value = true
