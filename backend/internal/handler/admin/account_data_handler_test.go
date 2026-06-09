@@ -282,7 +282,7 @@ func TestImportDataAcceptsGeminiTokensExport(t *testing.T) {
 	dataPayload := map[string]any{
 		"data": []map[string]any{
 			{
-				"id":        "token-a",
+				"id":        1001,
 				"platform":  "gemini_official",
 				"plan_type": "free",
 				"priority":  7,
@@ -301,7 +301,7 @@ func TestImportDataAcceptsGeminiTokensExport(t *testing.T) {
 				},
 			},
 			{
-				"id":        "token-b",
+				"id":        1002,
 				"platform":  "gemini_official",
 				"plan_type": "plus",
 				"additional": map[string]any{
@@ -309,6 +309,17 @@ func TestImportDataAcceptsGeminiTokensExport(t *testing.T) {
 					"cookies": map[string]any{
 						"__Secure-1PSID": "psid-b",
 						"NID":            "nid-b",
+					},
+				},
+			},
+			{
+				"id":        1003,
+				"platform":  "gemini_official",
+				"plan_type": "ultra",
+				"additional": map[string]any{
+					"cookies": map[string]any{
+						"__Secure-1PSID": "psid-c",
+						"NID":            "nid-c",
 					},
 				},
 			},
@@ -323,7 +334,7 @@ func TestImportDataAcceptsGeminiTokensExport(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	require.Len(t, adminSvc.createdAccounts, 2)
+	require.Len(t, adminSvc.createdAccounts, 3)
 	first := adminSvc.createdAccounts[0]
 	require.Equal(t, "gemini-free", first.Name)
 	require.Equal(t, service.PlatformGemini, first.Platform)
@@ -344,4 +355,8 @@ func TestImportDataAcceptsGeminiTokensExport(t *testing.T) {
 	require.Equal(t, "pro@example.com", second.Name)
 	require.Equal(t, service.GeminiTierGoogleAIPro, second.Credentials["tier_id"])
 	require.Equal(t, 1, second.Priority)
+
+	third := adminSvc.createdAccounts[2]
+	require.Equal(t, "gemini-web-1003", third.Name)
+	require.Equal(t, service.GeminiTierGoogleAIUltra, third.Credentials["tier_id"])
 }

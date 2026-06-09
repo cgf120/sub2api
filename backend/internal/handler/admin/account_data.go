@@ -610,7 +610,7 @@ func parseIncludeProxies(c *gin.Context) (bool, error) {
 }
 
 type geminiTokensImportItem struct {
-	ID         string                       `json:"id"`
+	ID         any                          `json:"id"`
 	Platform   string                       `json:"platform"`
 	PlanType   string                       `json:"plan_type"`
 	Status     string                       `json:"status"`
@@ -783,10 +783,30 @@ func defaultGeminiTokensAccountName(item geminiTokensImportItem, sequence int) s
 	if email := strings.TrimSpace(item.Additional.Email); email != "" {
 		return email
 	}
-	if id := strings.TrimSpace(item.ID); id != "" {
+	if id := geminiTokensImportID(item.ID); id != "" {
 		return "gemini-web-" + id
 	}
 	return fmt.Sprintf("gemini-web-%d", sequence)
+}
+
+func geminiTokensImportID(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case float64:
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case int:
+		return strconv.Itoa(v)
+	case json.Number:
+		return strings.TrimSpace(v.String())
+	default:
+		return ""
+	}
 }
 
 func uniqueImportAccountName(name string, seen map[string]int) string {
