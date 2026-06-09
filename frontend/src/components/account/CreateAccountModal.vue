@@ -50,7 +50,7 @@
         <input
           v-model="form.name"
           type="text"
-          required
+          :required="!geminiWebInputLooksLikeTokensArray"
           class="input"
           :placeholder="t('admin.accounts.enterAccountName')"
           data-tour="account-form-name"
@@ -670,7 +670,13 @@
                 class="input font-mono"
                 placeholder='{"cookies":{"__Secure-1PSID":"...","NID":"...","__Secure-1PSIDTS":"...","__Secure-1PSIDCC":"...","COMPASS":"..."}} 或 {"additional":{"cookies":{...}},"plan_type":"free"}'
               ></textarea>
-              <p class="input-hint">仅支持 JSON。可粘贴纯 Cookie map、{"cookies":{...}}、tokens 单条 JSON；tokens 数组请用账号列表的“导入数据”。</p>
+              <p class="input-hint">仅支持 JSON。可粘贴纯 Cookie map、{"cookies":{...}}、tokens 单条 JSON；tokens 数组会批量导入全部账号。</p>
+              <div
+                v-if="geminiWebInputLooksLikeTokensArray"
+                class="mt-2 rounded-md border border-emerald-200 bg-white px-3 py-2 text-xs text-emerald-700 dark:border-emerald-800/50 dark:bg-dark-800 dark:text-emerald-300"
+              >
+                已检测到 tokens 数组，提交后会批量导入文件内全部 Gemini Web 账号，账号名优先使用 remark，其次使用 email 或 id。
+              </div>
             </div>
           </div>
 
@@ -3783,6 +3789,21 @@ const geminiSelectedTier = computed(() => {
   }
 })
 
+const geminiWebInputLooksLikeTokensArray = computed(() => {
+  if (form.platform !== 'gemini' || accountCategory.value !== 'oauth-based' || geminiOAuthType.value !== 'web') {
+    return false
+  }
+  const raw = geminiWebCookies.value.trim()
+  if (!raw.startsWith('[')) {
+    return false
+  }
+  try {
+    return isGeminiWebTokensArray(JSON.parse(raw))
+  } catch {
+    return false
+  }
+})
+
 const openAIWSModeOptions = computed(() => [
   { value: OPENAI_WS_MODE_OFF, label: t('admin.accounts.openai.wsModeOff') },
   { value: OPENAI_WS_MODE_CTX_POOL, label: t('admin.accounts.openai.wsModeCtxPool') },
@@ -4685,9 +4706,38 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
+const isGeminiWebTokensItem = (value: unknown): value is Record<string, unknown> => {
+  if (!isPlainObject(value)) {
+    return false
+  }
+  if (typeof value.platform === 'string' && value.platform.trim().toLowerCase() === 'gemini_official') {
+    return true
+  }
+  return isPlainObject(value.additional) && isPlainObject(value.additional.cookies)
+}
+
+const isGeminiWebTokensArray = (value: unknown): value is Record<string, unknown>[] => {
+  return Array.isArray(value) && value.length > 0 && value.every(isGeminiWebTokensItem)
+}
+
 type GeminiWebParsedCookieJson = {
   cookies: Record<string, string>
   tierId?: 'google_one_free' | 'google_ai_pro' | 'google_ai_ultra'
+}
+
+const parseGeminiWebCookieRawJson = (): unknown | null => {
+  const raw = geminiWebCookies.value.trim()
+  if (!raw) {
+    appStore.showError('请填写完整 Cookie JSON')
+    return null
+  }
+
+  try {
+    return JSON.parse(raw)
+  } catch {
+    appStore.showError('Cookie 必须是 JSON 格式，不支持 __Secure-1PSID::NID 或 Cookie header')
+    return null
+  }
 }
 
 const normalizeGeminiWebPlanType = (value: unknown): GeminiWebParsedCookieJson['tierId'] | undefined => {
@@ -4738,21 +4788,7 @@ const extractGeminiWebCookieInput = (
   return { cookieSource: value, tierId }
 }
 
-const parseGeminiWebCookieJson = (): GeminiWebParsedCookieJson | null => {
-  const raw = geminiWebCookies.value.trim()
-  if (!raw) {
-    appStore.showError('请填写完整 Cookie JSON')
-    return null
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    appStore.showError('Cookie 必须是 JSON 格式，不支持 __Secure-1PSID::NID 或 Cookie header')
-    return null
-  }
-
+const parseGeminiWebCookieJson = (parsed: unknown): GeminiWebParsedCookieJson | null => {
   const extracted = extractGeminiWebCookieInput(parsed)
   if (!extracted) {
     appStore.showError('Cookie JSON 必须是对象或 tokens 数组')
@@ -4787,6 +4823,39 @@ const handleGeminiWebCookieFile = async (event: Event) => {
     geminiWebCookies.value = await file.text()
   } finally {
     input.value = ''
+  }
+}
+
+const importGeminiWebTokensArray = async (items: Record<string, unknown>[]) => {
+  submitting.value = true
+  try {
+    const res = await adminAPI.accounts.importData({
+      data: items,
+      skip_default_group_bind: true
+    })
+
+    const params: Record<string, unknown> = {
+      account_created: res.account_created,
+      account_failed: res.account_failed,
+      proxy_created: res.proxy_created,
+      proxy_reused: res.proxy_reused,
+      proxy_failed: res.proxy_failed
+    }
+    if (res.account_failed > 0 || res.proxy_failed > 0) {
+      appStore.showError(t('admin.accounts.dataImportCompletedWithErrors', params))
+      if (res.account_created > 0) {
+        emit('created')
+      }
+      return
+    }
+
+    appStore.showSuccess(t('admin.accounts.dataImportSuccess', params))
+    emit('created')
+    handleClose()
+  } catch (error: any) {
+    appStore.showError(error.response?.data?.message || error.response?.data?.detail || error?.message || t('admin.accounts.dataImportFailed'))
+  } finally {
+    submitting.value = false
   }
 }
 
@@ -4926,11 +4995,20 @@ const handleSubmit = async () => {
   }
 
   if (form.platform === 'gemini' && accountCategory.value === 'oauth-based' && geminiOAuthType.value === 'web') {
+    const rawCookieInput = parseGeminiWebCookieRawJson()
+    if (!rawCookieInput) {
+      return
+    }
+    if (isGeminiWebTokensArray(rawCookieInput)) {
+      await importGeminiWebTokensArray(rawCookieInput)
+      return
+    }
+
     if (!form.name.trim()) {
       appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
       return
     }
-    const parsedCookieInput = parseGeminiWebCookieJson()
+    const parsedCookieInput = parseGeminiWebCookieJson(rawCookieInput)
     if (!parsedCookieInput) {
       return
     }
