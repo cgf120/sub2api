@@ -21,3 +21,9 @@ func TestDefaultModels_ContainsImageModels(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultTestModelUsesTextModel(t *testing.T) {
+	if DefaultTestModel != "gemini-3-flash-preview" {
+		t.Fatalf("DefaultTestModel=%q, want gemini-3-flash-preview", DefaultTestModel)
+	}
+}

@@ -22,5 +22,5 @@ var DefaultModels = []Model{
 	{ID: "gemini-3.1-flash-image", Type: "model", DisplayName: "Gemini 3.1 Flash Image", CreatedAt: ""},
 }
 
-// DefaultTestModel is the default model to preselect in test flows.
-const DefaultTestModel = "gemini-2.0-flash"
+// DefaultTestModel is the default text model to preselect in test flows.
+const DefaultTestModel = "gemini-3-flash-preview"

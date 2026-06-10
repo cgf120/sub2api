@@ -89,6 +89,7 @@ function mountModal(account: Record<string, unknown> = {
 describe('AccountTestModal', () => {
   beforeEach(() => {
     getAvailableModels.mockResolvedValue([
+      { id: 'gemini-3-flash-preview', display_name: 'Gemini 3 Flash Preview' },
       { id: 'gemini-2.0-flash', display_name: 'Gemini 2.0 Flash' },
       { id: 'gemini-2.5-flash-image', display_name: 'Gemini 2.5 Flash Image' },
       { id: 'gemini-3.1-flash-image', display_name: 'Gemini 3.1 Flash Image' }
@@ -116,9 +117,26 @@ describe('AccountTestModal', () => {
     vi.restoreAllMocks()
   })
 
+  it('gemini 默认选中文本模型而不是图片模型', async () => {
+    const wrapper = mountModal()
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).availableModels.map((model: { id: string }) => model.id)).toEqual([
+      'gemini-3-flash-preview',
+      'gemini-2.0-flash',
+      'gemini-3.1-flash-image',
+      'gemini-2.5-flash-image'
+    ])
+    expect((wrapper.vm as any).selectedModelId).toBe('gemini-3-flash-preview')
+  })
+
   it('gemini 图片模型测试会携带提示词并渲染图片预览', async () => {
     const wrapper = mountModal()
     await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    ;(wrapper.vm as any).selectedModelId = 'gemini-3.1-flash-image'
     await flushPromises()
 
     const promptInput = wrapper.find('textarea.textarea-stub')

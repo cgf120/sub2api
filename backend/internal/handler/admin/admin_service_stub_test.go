@@ -356,7 +356,15 @@ func (s *stubAdminService) CreateAccount(ctx context.Context, input *service.Cre
 	if s.createAccountErr != nil {
 		return nil, s.createAccountErr
 	}
-	account := service.Account{ID: 300, Name: input.Name, Status: service.StatusActive}
+	account := service.Account{
+		ID:          300,
+		Name:        input.Name,
+		Platform:    input.Platform,
+		Type:        input.Type,
+		Credentials: input.Credentials,
+		Status:      service.StatusActive,
+		Schedulable: true,
+	}
 	return &account, nil
 }
 
@@ -559,6 +567,7 @@ func (s *stubAdminService) CheckProxyQuality(ctx context.Context, id int64) (*se
 			{Target: "openai", Status: "pass", HTTPStatus: 401},
 			{Target: "anthropic", Status: "pass", HTTPStatus: 401},
 			{Target: "gemini", Status: "pass", HTTPStatus: 200},
+			{Target: "grok", Status: "pass", HTTPStatus: 401},
 		},
 	}, nil
 }

@@ -1,7 +1,7 @@
 <template>
   <BaseDialog
     :show="show"
-    title="批量导入 GPT/Grok 账号"
+    title="批量导入 GPT/Grok/Gemini/Anthropic 账号"
     width="wide"
     :close-on-click-outside="false"
     @close="handleClose"
@@ -12,13 +12,21 @@
           <div>
             <div class="text-sm font-medium text-gray-900 dark:text-white">Excel 模板</div>
             <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              A 列名称可空，B 列类型填 gpt 或 grok，C 列填 SK 或 SSO。每个账号一行。
+              A 列名称可空，B 列类型填 gpt、grok、gemini 或 anthropic，C 列填 SK 或 SSO。每个账号一行。
             </div>
           </div>
           <button type="button" class="btn btn-secondary" @click="downloadTemplate">
             <Icon name="download" size="sm" />
             下载模板
           </button>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-gray-200 px-4 py-3 dark:border-dark-600">
+        <div class="mb-3 text-sm font-medium text-gray-900 dark:text-white">导入设置</div>
+        <div class="grid gap-4 md:grid-cols-2">
+          <ProxySelector v-model="selectedProxyId" :proxies="props.proxies" :disabled="isRunning" />
+          <GroupSelector v-model="selectedGroupIds" :groups="props.groups" searchable />
         </div>
       </div>
 
@@ -134,11 +142,20 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import * as XLSX from 'xlsx'
 import { adminAPI } from '@/api/admin'
 import { useAppStore } from '@/stores/app'
-import type { AccountBulkImportItem, AccountBulkImportJob } from '@/types'
+import type { AccountBulkImportItem, AccountBulkImportJob, AdminGroup, Proxy as AccountProxy } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import GroupSelector from '@/components/common/GroupSelector.vue'
+import ProxySelector from '@/components/common/ProxySelector.vue'
 import Icon from '@/components/icons/Icon.vue'
 
-const props = defineProps<{ show: boolean }>()
+const props = withDefaults(defineProps<{
+  show: boolean
+  proxies?: AccountProxy[]
+  groups?: AdminGroup[]
+}>(), {
+  proxies: () => [],
+  groups: () => []
+})
 const emit = defineEmits<{
   close: []
   imported: []
@@ -150,10 +167,30 @@ const selectedFileName = ref('')
 const parsedRows = ref<AccountBulkImportItem[]>([])
 const parseErrors = ref<string[]>([])
 const job = ref<AccountBulkImportJob | null>(null)
+const selectedProxyId = ref<number | null>(null)
+const selectedGroupIds = ref<number[]>([])
 const completionNotified = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-const allowedTypes = new Set(['gpt', 'openai', 'chatgpt', 'grok', 'xai', 'x.ai'])
+const allowedTypes = new Set([
+  'gpt',
+  'openai',
+  'chatgpt',
+  'grok',
+  'xai',
+  'x.ai',
+  'gemini',
+  'google',
+  'google-ai',
+  'google_ai',
+  'ai-studio',
+  'ai_studio',
+  'aistudio',
+  'anthropic',
+  'claude',
+  'claude-api',
+  'claude_api'
+])
 const isRunning = computed(() => job.value?.status === 'pending' || job.value?.status === 'running')
 const validRowCount = computed(() =>
   parsedRows.value.filter((row) => allowedTypes.has(row.type.trim().toLowerCase()) && row.credential.trim()).length
@@ -190,15 +227,17 @@ const hasHeaderRow = (row: unknown[]) => {
 const downloadTemplate = () => {
   const workbook = XLSX.utils.book_new()
   const importSheet = XLSX.utils.aoa_to_sheet([
-    ['名称（非必填）', '类型（gpt/grok）', 'SK 或 SSO']
+    ['名称（非必填）', '类型（gpt/grok/gemini/anthropic）', 'SK 或 SSO']
   ])
   importSheet['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 90 }]
   XLSX.utils.book_append_sheet(workbook, importSheet, '导入')
 
   const exampleSheet = XLSX.utils.aoa_to_sheet([
-    ['名称（非必填）', '类型（gpt/grok）', 'SK 或 SSO'],
+    ['名称（非必填）', '类型（gpt/grok/gemini/anthropic）', 'SK 或 SSO'],
     ['', 'gpt', 'sk-proj-...'],
-    ['grok1', 'grok', 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...']
+    ['grok1', 'grok', 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...'],
+    ['gemini1', 'gemini', 'AIza...'],
+    ['anthropic1', 'anthropic', 'sk-ant-...']
   ])
   exampleSheet['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 90 }]
   XLSX.utils.book_append_sheet(workbook, exampleSheet, '示例')
@@ -248,7 +287,7 @@ const parseSheetRows = (matrix: unknown[][]) => {
     if (!type) {
       errors.push(`第 ${rowNumber} 行缺少类型`)
     } else if (!allowedTypes.has(type)) {
-      errors.push(`第 ${rowNumber} 行类型不是 gpt 或 grok`)
+      errors.push(`第 ${rowNumber} 行类型不是 gpt、grok、gemini 或 anthropic`)
     }
     if (!credential) {
       errors.push(`第 ${rowNumber} 行缺少 SK/SSO`)
@@ -266,7 +305,10 @@ const startImport = async () => {
   if (!canStartImport.value) return
   try {
     completionNotified.value = false
-    job.value = await adminAPI.accounts.startBulkImport(parsedRows.value)
+    job.value = await adminAPI.accounts.startBulkImport(parsedRows.value, {
+      proxy_id: selectedProxyId.value,
+      group_ids: selectedGroupIds.value
+    })
     startPolling()
   } catch (error: any) {
     appStore.showError(error.response?.data?.message || error.message || '启动导入失败')
@@ -318,6 +360,8 @@ const resetState = () => {
   parsedRows.value = []
   parseErrors.value = []
   job.value = null
+  selectedProxyId.value = null
+  selectedGroupIds.value = []
   completionNotified.value = false
 }
 

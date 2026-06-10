@@ -27,6 +27,22 @@ func TestFinalizeProxyQualityResult_ScoreAndGrade(t *testing.T) {
 	require.Contains(t, result.Summary, "挑战 1 项")
 }
 
+func TestProxyQualityTargets_IncludesGrok(t *testing.T) {
+	var grok *proxyQualityTarget
+	for i := range proxyQualityTargets {
+		if proxyQualityTargets[i].Target == "grok" {
+			grok = &proxyQualityTargets[i]
+			break
+		}
+	}
+
+	require.NotNil(t, grok)
+	require.Equal(t, "https://api.x.ai/v1/models", grok.URL)
+	require.Equal(t, http.MethodGet, grok.Method)
+	_, ok := grok.AllowedStatuses[http.StatusUnauthorized]
+	require.True(t, ok)
+}
+
 func TestRunProxyQualityTarget_CloudflareChallenge(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

@@ -41,8 +41,9 @@ type AccountRuntimeBlocker interface {
 
 // SuccessfulTestRecoveryResult 表示测试成功后恢复了哪些运行时状态。
 type SuccessfulTestRecoveryResult struct {
-	ClearedError     bool
-	ClearedRateLimit bool
+	ClearedError        bool
+	ClearedRateLimit    bool
+	RestoredSchedulable bool
 }
 
 // AccountRecoveryOptions 控制账号恢复时的附加行为。
@@ -1487,10 +1488,17 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 
 	result := &SuccessfulTestRecoveryResult{}
 	if account.Status == StatusError {
+		restoreSchedulable := shouldRestoreSchedulableAfterErrorRecovery(account)
 		if err := s.accountRepo.ClearError(ctx, accountID); err != nil {
 			return nil, err
 		}
 		result.ClearedError = true
+		if restoreSchedulable {
+			if err := s.accountRepo.SetSchedulable(ctx, accountID, true); err != nil {
+				return nil, err
+			}
+			result.RestoredSchedulable = true
+		}
 		if options.InvalidateToken && s.tokenCacheInvalidator != nil && account.IsOAuth() {
 			if invalidateErr := s.tokenCacheInvalidator.InvalidateToken(ctx, account); invalidateErr != nil {
 				slog.Warn("recover_account_state_invalidate_token_failed", "account_id", accountID, "error", invalidateErr)
@@ -1518,6 +1526,16 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 // 按需恢复 error / rate-limit / overload / temp-unsched / model-rate-limit 等运行时状态。
 func (s *RateLimitService) RecoverAccountAfterSuccessfulTest(ctx context.Context, accountID int64) (*SuccessfulTestRecoveryResult, error) {
 	return s.RecoverAccountState(ctx, accountID, AccountRecoveryOptions{})
+}
+
+func shouldRestoreSchedulableAfterErrorRecovery(account *Account) bool {
+	if account == nil || account.Status != StatusError || account.Schedulable {
+		return false
+	}
+	if account.AutoPauseOnExpired && account.ExpiresAt != nil && !time.Now().Before(*account.ExpiresAt) {
+		return false
+	}
+	return true
 }
 
 func (s *RateLimitService) ClearTempUnschedulable(ctx context.Context, accountID int64) error {

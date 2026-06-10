@@ -166,6 +166,21 @@ func (s *ProxyProbeServiceSuite) TestParseHTTPBin_NoIP() {
 	require.ErrorContains(s.T(), err, "no IP found")
 }
 
+func (s *ProxyProbeServiceSuite) TestParsePlainIP_Success() {
+	body := []byte("2a05:dfc2:f7cd:f0a1:570a:6d33:286e:1a6a\n")
+	info, latencyMs, err := s.prober.parsePlainIP(body, 75)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(75), latencyMs)
+	require.Equal(s.T(), "2a05:dfc2:f7cd:f0a1:570a:6d33:286e:1a6a", info.IP)
+}
+
+func (s *ProxyProbeServiceSuite) TestParsePlainIP_Invalid() {
+	body := []byte("not an ip")
+	_, _, err := s.prober.parsePlainIP(body, 75)
+	require.Error(s.T(), err)
+	require.ErrorContains(s.T(), err, "plain IP response invalid")
+}
+
 func TestProxyProbeServiceSuite(t *testing.T) {
 	suite.Run(t, new(ProxyProbeServiceSuite))
 }

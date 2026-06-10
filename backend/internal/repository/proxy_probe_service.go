@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -48,10 +49,11 @@ const (
 // 某些 AI API 专用代理只允许访问特定域名，因此需要多个备选
 var probeURLs = []struct {
 	url    string
-	parser string // "ip-api" or "httpbin"
+	parser string // "ip-api", "httpbin", or "plain-ip"
 }{
 	{"http://ip-api.com/json/?lang=zh-CN", "ip-api"},
 	{"http://httpbin.org/ip", "httpbin"},
+	{"https://ip.sb", "plain-ip"},
 }
 
 type proxyProbeService struct {
@@ -121,6 +123,8 @@ func (s *proxyProbeService) probeWithURL(ctx context.Context, client *http.Clien
 		return s.parseIPAPI(body, latencyMs)
 	case "httpbin":
 		return s.parseHTTPBin(body, latencyMs)
+	case "plain-ip":
+		return s.parsePlainIP(body, latencyMs)
 	default:
 		return nil, latencyMs, fmt.Errorf("unknown parser: %s", parser)
 	}
@@ -178,5 +182,20 @@ func (s *proxyProbeService) parseHTTPBin(body []byte, latencyMs int64) (*service
 	}
 	return &service.ProxyExitInfo{
 		IP: result.Origin,
+	}, latencyMs, nil
+}
+
+func (s *proxyProbeService) parsePlainIP(body []byte, latencyMs int64) (*service.ProxyExitInfo, int64, error) {
+	text := strings.TrimSpace(string(body))
+	addr, err := netip.ParseAddr(text)
+	if err != nil {
+		preview := text
+		if len(preview) > 80 {
+			preview = preview[:80] + "..."
+		}
+		return nil, latencyMs, fmt.Errorf("plain IP response invalid: %s", preview)
+	}
+	return &service.ProxyExitInfo{
+		IP: addr.String(),
 	}, latencyMs, nil
 }

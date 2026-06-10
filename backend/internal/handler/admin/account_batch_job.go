@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -217,10 +218,10 @@ func (h *AccountHandler) runAccountBatchTestJob(jobID string, accountIDs []int64
 		return
 	}
 
-	accountNames := make(map[int64]string, len(accounts))
+	accountByID := make(map[int64]*service.Account, len(accounts))
 	for _, account := range accounts {
 		if account != nil {
-			accountNames[account.ID] = account.Name
+			accountByID[account.ID] = account
 		}
 	}
 
@@ -235,7 +236,7 @@ func (h *AccountHandler) runAccountBatchTestJob(jobID string, accountIDs []int64
 				<-sem
 				wg.Done()
 			}()
-			result := h.testAccountForBatchJob(ctx, accountID, accountNames[accountID])
+			result := h.testAccountForBatchJob(ctx, accountID, accountByID[accountID])
 			accountBatchTestJobs.addResult(jobID, result)
 		}()
 	}
@@ -243,15 +244,15 @@ func (h *AccountHandler) runAccountBatchTestJob(jobID string, accountIDs []int64
 	accountBatchTestJobs.finish(jobID, nil)
 }
 
-func (h *AccountHandler) testAccountForBatchJob(ctx context.Context, accountID int64, name string) AccountBatchTestResult {
+func (h *AccountHandler) testAccountForBatchJob(ctx context.Context, accountID int64, account *service.Account) AccountBatchTestResult {
 	result := AccountBatchTestResult{
 		AccountID: accountID,
-		Name:      name,
 	}
-	if name == "" {
+	if account == nil {
 		result.Error = "account not found"
 		return result
 	}
+	result.Name = account.Name
 
 	testCtx, cancel := context.WithTimeout(ctx, accountBatchTestItemTimeout)
 	defer cancel()
@@ -259,6 +260,10 @@ func (h *AccountHandler) testAccountForBatchJob(ctx context.Context, accountID i
 	testResult, err := h.accountTestService.RunTestBackground(testCtx, accountID, "")
 	if err != nil {
 		result.Error = err.Error()
+		if isAccountValidationInconclusive(account, err) {
+			result.Error = result.Error + "; account unchanged"
+			return result
+		}
 		h.disableFailedBatchTestAccount(ctx, accountID, &result)
 		return result
 	}
@@ -281,6 +286,10 @@ func (h *AccountHandler) testAccountForBatchJob(ctx context.Context, accountID i
 	result.Error = strings.TrimSpace(testResult.ErrorMessage)
 	if result.Error == "" {
 		result.Error = "test failed"
+	}
+	if isAccountValidationInconclusive(account, fmt.Errorf("%s", result.Error)) {
+		result.Error = result.Error + "; account unchanged"
+		return result
 	}
 	h.disableFailedBatchTestAccount(ctx, accountID, &result)
 	return result

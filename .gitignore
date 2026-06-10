@@ -134,6 +134,7 @@ docs/*
 !docs/GROK_INTEGRATION.md
 .serena/
 .codex/
+.codex-deploy/
 frontend/coverage/
 aicodex
 output/

@@ -1046,6 +1046,11 @@ export interface AccountBulkImportItem {
   credential: string
 }
 
+export interface AccountBulkImportOptions {
+  proxy_id?: number | null
+  group_ids?: number[]
+}
+
 export interface AccountBulkImportResult {
   row_number: number
   name?: string

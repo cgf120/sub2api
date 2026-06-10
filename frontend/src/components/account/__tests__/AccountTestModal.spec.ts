@@ -189,4 +189,41 @@ describe('AccountTestModal', () => {
 
     expect(wrapper.text()).toContain('已通过 /v1/chat/completions 验证')
   })
+
+  it('selects gemini text model before image models by default', async () => {
+    getAvailableModelsMock.mockResolvedValue([
+      { id: 'gemini-2.0-flash', display_name: 'Gemini 2.0 Flash' },
+      { id: 'gemini-3.1-flash-image', display_name: 'Gemini 3.1 Flash Image' },
+      { id: 'gemini-3-flash-preview', display_name: 'Gemini 3 Flash Preview' }
+    ])
+
+    const wrapper = mount(AccountTestModal, {
+      props: {
+        show: false,
+        account: {
+          ...buildAccount(),
+          platform: 'gemini',
+          type: 'apikey'
+        }
+      },
+      global: {
+        stubs: {
+          BaseDialog: BaseDialogStub,
+          Select: SelectStub,
+          TextArea: TextAreaStub,
+          Icon: true
+        }
+      }
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).availableModels.map((model: { id: string }) => model.id)).toEqual([
+      'gemini-3-flash-preview',
+      'gemini-2.0-flash',
+      'gemini-3.1-flash-image'
+    ])
+    expect((wrapper.vm as any).selectedModelId).toBe('gemini-3-flash-preview')
+  })
 })

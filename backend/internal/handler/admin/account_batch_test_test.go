@@ -31,7 +31,7 @@ func TestTestAccountForBatchJobSuccess(t *testing.T) {
 		},
 	}
 
-	result := handler.testAccountForBatchJob(context.Background(), 42, "acc")
+	result := handler.testAccountForBatchJob(context.Background(), 42, &service.Account{ID: 42, Name: "acc"})
 	if !result.Success || result.AccountID != 42 || result.ResponseText != "OK" || result.LatencyMs != 12 {
 		t.Fatalf("unexpected result: %+v", result)
 	}
@@ -49,7 +49,7 @@ func TestTestAccountForBatchJobFailure(t *testing.T) {
 		},
 	}
 
-	result := handler.testAccountForBatchJob(context.Background(), 42, "acc")
+	result := handler.testAccountForBatchJob(context.Background(), 42, &service.Account{ID: 42, Name: "acc"})
 	if result.Success || result.Error != "invalid credentials; account disabled" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
@@ -61,5 +61,37 @@ func TestTestAccountForBatchJobFailure(t *testing.T) {
 	}
 	if adminSvc.accountErrors[42] != "account batch test failed: invalid credentials" {
 		t.Fatalf("expected batch test error recorded, got %q", adminSvc.accountErrors[42])
+	}
+}
+
+func TestTestAccountForBatchJobGeminiTransientFailureDoesNotDisable(t *testing.T) {
+	adminSvc := newStubAdminService()
+	handler := &AccountHandler{
+		adminService: adminSvc,
+		accountTestService: &bulkImportTestRunnerStub{
+			result: &service.ScheduledTestResult{
+				Status:       "failed",
+				ErrorMessage: `API returned 503: {"error":{"status":"UNAVAILABLE","message":"This model is currently experiencing high demand."}}`,
+			},
+		},
+	}
+
+	result := handler.testAccountForBatchJob(context.Background(), 42, &service.Account{
+		ID:       42,
+		Name:     "gemini",
+		Platform: service.PlatformGemini,
+		Type:     service.AccountTypeAPIKey,
+	})
+	if result.Success || result.Error != `API returned 503: {"error":{"status":"UNAVAILABLE","message":"This model is currently experiencing high demand."}}; account unchanged` {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if _, ok := adminSvc.updatedAccountStatus[42]; ok {
+		t.Fatalf("expected account 42 status not to be updated, got %q", adminSvc.updatedAccountStatus[42])
+	}
+	if _, ok := adminSvc.accountSchedulable[42]; ok {
+		t.Fatalf("expected account 42 schedulable flag not to be changed")
+	}
+	if _, ok := adminSvc.accountErrors[42]; ok {
+		t.Fatalf("expected account 42 error not to be recorded, got %q", adminSvc.accountErrors[42])
 	}
 }

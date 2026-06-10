@@ -29,7 +29,9 @@ type AccountBulkImportItem struct {
 }
 
 type AccountBulkImportRequest struct {
-	Items []AccountBulkImportItem `json:"items" binding:"required,min=1"`
+	Items    []AccountBulkImportItem `json:"items" binding:"required,min=1"`
+	GroupIDs []int64                 `json:"group_ids"`
+	ProxyID  *int64                  `json:"proxy_id"`
 }
 
 type AccountBulkImportResult struct {
@@ -59,6 +61,12 @@ type AccountBulkImportJob struct {
 type accountBulkImportJobStore struct {
 	mu   sync.RWMutex
 	jobs map[string]*AccountBulkImportJob
+}
+
+type accountBulkImportOptions struct {
+	GroupIDs          []int64
+	ProxyID           *int64
+	groupPlatformByID map[int64]string
 }
 
 var accountBulkImportJobs = &accountBulkImportJobStore{
@@ -151,7 +159,7 @@ func cloneAccountBulkImportJob(job *AccountBulkImportJob) AccountBulkImportJob {
 	return cloned
 }
 
-// StartBulkImport starts an async GPT/Grok account import job.
+// StartBulkImport starts an async GPT/Grok/Gemini/Anthropic account import job.
 // POST /api/v1/admin/accounts/bulk-import
 func (h *AccountHandler) StartBulkImport(c *gin.Context) {
 	var req AccountBulkImportRequest
@@ -169,13 +177,18 @@ func (h *AccountHandler) StartBulkImport(c *gin.Context) {
 		response.BadRequest(c, fmt.Sprintf("Too many import rows, max is %d", accountBulkImportMaxItems))
 		return
 	}
+	options, err := h.buildAccountBulkImportOptions(c.Request.Context(), req)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
 	job := accountBulkImportJobs.create(len(items))
-	go h.runAccountBulkImportJob(job.ID, items)
+	go h.runAccountBulkImportJob(job.ID, items, options)
 	response.Accepted(c, job)
 }
 
-// GetBulkImportJob returns async GPT/Grok account import progress.
+// GetBulkImportJob returns async GPT/Grok/Gemini/Anthropic account import progress.
 // GET /api/v1/admin/accounts/bulk-import/:job_id
 func (h *AccountHandler) GetBulkImportJob(c *gin.Context) {
 	jobID := strings.TrimSpace(c.Param("job_id"))
@@ -191,7 +204,7 @@ func (h *AccountHandler) GetBulkImportJob(c *gin.Context) {
 	response.Success(c, job)
 }
 
-func (h *AccountHandler) runAccountBulkImportJob(jobID string, items []AccountBulkImportItem) {
+func (h *AccountHandler) runAccountBulkImportJob(jobID string, items []AccountBulkImportItem, options accountBulkImportOptions) {
 	defer func() {
 		if r := recover(); r != nil {
 			accountBulkImportJobs.finish(jobID, fmt.Errorf("import job panic: %v", r))
@@ -201,10 +214,40 @@ func (h *AccountHandler) runAccountBulkImportJob(jobID string, items []AccountBu
 	accountBulkImportJobs.markRunning(jobID)
 	ctx := context.Background()
 	for idx, item := range items {
-		result := h.createAccountFromBulkImportItem(ctx, item, idx+1)
+		result := h.createAccountFromBulkImportItem(ctx, item, idx+1, options)
 		accountBulkImportJobs.addResult(jobID, result)
 	}
 	accountBulkImportJobs.finish(jobID, nil)
+}
+
+func (h *AccountHandler) buildAccountBulkImportOptions(ctx context.Context, req AccountBulkImportRequest) (accountBulkImportOptions, error) {
+	options := accountBulkImportOptions{
+		GroupIDs: normalizeAccountBulkImportGroupIDs(req.GroupIDs),
+	}
+	if req.ProxyID != nil && *req.ProxyID > 0 {
+		proxyID := *req.ProxyID
+		options.ProxyID = &proxyID
+	}
+	if len(options.GroupIDs) == 0 {
+		return options, nil
+	}
+	if h.adminService == nil {
+		return options, errors.New("admin service is not configured")
+	}
+	groups, err := h.adminService.GetAllGroups(ctx)
+	if err != nil {
+		return options, fmt.Errorf("failed to load groups: %w", err)
+	}
+	options.groupPlatformByID = make(map[int64]string, len(groups))
+	for _, group := range groups {
+		options.groupPlatformByID[group.ID] = group.Platform
+	}
+	for _, groupID := range options.GroupIDs {
+		if _, ok := options.groupPlatformByID[groupID]; !ok {
+			return options, fmt.Errorf("group %d not found", groupID)
+		}
+	}
+	return options, nil
 }
 
 func normalizeAccountBulkImportItems(items []AccountBulkImportItem) []AccountBulkImportItem {
@@ -224,7 +267,23 @@ func normalizeAccountBulkImportItems(items []AccountBulkImportItem) []AccountBul
 	return normalized
 }
 
-func (h *AccountHandler) createAccountFromBulkImportItem(ctx context.Context, item AccountBulkImportItem, sequence int) AccountBulkImportResult {
+func normalizeAccountBulkImportGroupIDs(groupIDs []int64) []int64 {
+	normalized := make([]int64, 0, len(groupIDs))
+	seen := make(map[int64]struct{}, len(groupIDs))
+	for _, id := range groupIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		normalized = append(normalized, id)
+	}
+	return normalized
+}
+
+func (h *AccountHandler) createAccountFromBulkImportItem(ctx context.Context, item AccountBulkImportItem, sequence int, options accountBulkImportOptions) AccountBulkImportResult {
 	result := AccountBulkImportResult{
 		RowNumber: item.RowNumber,
 		Type:      item.Type,
@@ -248,9 +307,11 @@ func (h *AccountHandler) createAccountFromBulkImportItem(ctx context.Context, it
 		Platform:       platform,
 		Type:           accountType,
 		Credentials:    credentials,
+		ProxyID:        options.ProxyID,
 		Concurrency:    10,
 		Priority:       1,
 		RateMultiplier: &rateMultiplier,
+		GroupIDs:       options.groupIDsForPlatform(platform),
 	})
 	if err != nil {
 		result.Error = err.Error()
@@ -258,13 +319,17 @@ func (h *AccountHandler) createAccountFromBulkImportItem(ctx context.Context, it
 	}
 
 	if err := h.validateBulkImportedAccount(ctx, account); err != nil {
+		result.AccountID = account.ID
+		if isAccountValidationInconclusive(account, err) {
+			result.Success = true
+			result.Warning = fmt.Sprintf("%s; validation inconclusive, account imported as active", err.Error())
+			return result
+		}
 		if disableErr := h.disableInvalidAccount(ctx, account.ID, err); disableErr != nil {
-			result.AccountID = account.ID
 			result.Error = fmt.Sprintf("%s; failed to disable imported account: %v", err.Error(), disableErr)
 			return result
 		}
 		result.Success = true
-		result.AccountID = account.ID
 		result.Warning = fmt.Sprintf("%s; account imported as disabled", err.Error())
 		return result
 	}
@@ -275,17 +340,36 @@ func (h *AccountHandler) createAccountFromBulkImportItem(ctx context.Context, it
 	return result
 }
 
+func (o accountBulkImportOptions) groupIDsForPlatform(platform string) []int64 {
+	if len(o.GroupIDs) == 0 {
+		return nil
+	}
+	if len(o.groupPlatformByID) == 0 {
+		return append([]int64(nil), o.GroupIDs...)
+	}
+	groupIDs := make([]int64, 0, len(o.GroupIDs))
+	for _, groupID := range o.GroupIDs {
+		if o.groupPlatformByID[groupID] == platform {
+			groupIDs = append(groupIDs, groupID)
+		}
+	}
+	if len(groupIDs) == 0 {
+		return nil
+	}
+	return groupIDs
+}
+
 func (h *AccountHandler) disableInvalidAccount(ctx context.Context, accountID int64, validationErr error) error {
 	if h.adminService == nil {
 		return errors.New("admin service is not configured")
+	}
+	if validationErr != nil {
+		_ = h.adminService.SetAccountError(ctx, accountID, validationErr.Error())
 	}
 	if _, err := h.adminService.UpdateAccount(ctx, accountID, &service.UpdateAccountInput{Status: service.StatusDisabled}); err != nil {
 		return err
 	}
 	_, _ = h.adminService.SetAccountSchedulable(ctx, accountID, false)
-	if validationErr != nil {
-		_ = h.adminService.SetAccountError(ctx, accountID, validationErr.Error())
-	}
 	return nil
 }
 
@@ -318,10 +402,50 @@ func (h *AccountHandler) validateBulkImportedAccount(ctx context.Context, accoun
 	return fmt.Errorf("account validation failed: %s", message)
 }
 
+func isAccountValidationInconclusive(account *service.Account, err error) bool {
+	if account == nil || err == nil || account.Platform != service.PlatformGemini {
+		return false
+	}
+	return isGeminiTransientValidationError(err.Error())
+}
+
+func isGeminiTransientValidationError(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	if normalized == "" {
+		return false
+	}
+	transientMarkers := []string{
+		"api returned 500",
+		"api returned 502",
+		"api returned 503",
+		"api returned 504",
+		"status 500",
+		"status 502",
+		"status 503",
+		"status 504",
+		"unavailable",
+		"currently experiencing high demand",
+		"temporarily unavailable",
+		"context deadline exceeded",
+		"client.timeout",
+		"i/o timeout",
+		"timeout awaiting response headers",
+		"connection reset",
+		"connection refused",
+		"eof",
+	}
+	for _, marker := range transientMarkers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func buildAccountBulkImportCreateConfig(item AccountBulkImportItem) (platform string, accountType string, credentials map[string]any, defaultPrefix string, err error) {
 	credential := strings.TrimSpace(item.Credential)
 	if credential == "" {
-		return "", "", nil, "", fmt.Errorf("SK/SSO is required")
+		return "", "", nil, "", fmt.Errorf("credential is required")
 	}
 
 	switch normalizeAccountBulkImportType(item.Type) {
@@ -334,8 +458,19 @@ func buildAccountBulkImportCreateConfig(item AccountBulkImportItem) (platform st
 		return service.PlatformGrok, service.AccountTypeOAuth, map[string]any{
 			"sso": credential,
 		}, "Grok", nil
+	case "gemini":
+		return service.PlatformGemini, service.AccountTypeAPIKey, map[string]any{
+			"base_url": "https://generativelanguage.googleapis.com",
+			"api_key":  credential,
+			"tier_id":  service.GeminiTierAIStudioFree,
+		}, "Gemini", nil
+	case "anthropic":
+		return service.PlatformAnthropic, service.AccountTypeAPIKey, map[string]any{
+			"base_url": "https://api.anthropic.com",
+			"api_key":  credential,
+		}, "Anthropic", nil
 	default:
-		return "", "", nil, "", fmt.Errorf("type must be gpt or grok")
+		return "", "", nil, "", fmt.Errorf("type must be gpt, grok, gemini, or anthropic")
 	}
 }
 
@@ -345,6 +480,10 @@ func normalizeAccountBulkImportType(value string) string {
 		return "gpt"
 	case "grok", "xai", "x.ai":
 		return "grok"
+	case "gemini", "google", "google-ai", "google_ai", "ai-studio", "ai_studio", "aistudio":
+		return "gemini"
+	case "anthropic", "claude", "claude-api", "claude_api":
+		return "anthropic"
 	default:
 		return ""
 	}
