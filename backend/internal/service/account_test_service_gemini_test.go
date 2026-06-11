@@ -4,6 +4,7 @@ package service
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -56,4 +57,37 @@ func TestProcessGeminiStream_EmitsImageEvent(t *testing.T) {
 	require.Contains(t, body, "\"type\":\"image\"")
 	require.Contains(t, body, "\"image_url\":\"data:image/png;base64,QUJD\"")
 	require.Contains(t, body, "\"mime_type\":\"image/png\"")
+}
+
+func TestSendGeminiWebImageTestResult_ReturnsRawURLWhenPreviewDownloadFails(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	ctx, recorder := newTestContext()
+	svc := &AccountTestService{}
+	rawURL := "https://lh3.googleusercontent.com/gg-dl/test-image"
+	client := &geminiWebOfficialClient{
+		account: &Account{ID: 10},
+		httpUpstream: &geminiWebHTTPUpstreamStub{
+			do: func(req *http.Request) (*http.Response, error) {
+				return newJSONResponse(http.StatusForbidden, "<html>forbidden</html>"), nil
+			},
+		},
+	}
+
+	err := svc.sendGeminiWebImageTestResult(ctx, &Account{ID: 10}, "gemini-3.1-flash-image", &geminiWebGenerateResult{
+		ImageURL: rawURL,
+		ImageID:  "http://googleusercontent.com/image_generation_content/233",
+		CID:      "c_test",
+		RID:      "r_test",
+		RCID:     "rc_test",
+	}, client)
+
+	require.NoError(t, err)
+	body := recorder.Body.String()
+	require.Contains(t, body, "Gemini Web 图片已生成")
+	require.Contains(t, body, `"type":"content"`)
+	require.Contains(t, body, `"image_url":"`+rawURL+`"`)
+	require.Contains(t, body, `"type":"image"`)
+	require.Contains(t, body, `"image_url":"`+rawURL+`"`)
 }

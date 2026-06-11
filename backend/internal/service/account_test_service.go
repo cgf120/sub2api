@@ -961,34 +961,13 @@ func (s *AccountTestService) testGeminiWebAccountConnection(c *gin.Context, acco
 
 	if isImageGenerationModel(modelID) {
 		s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 Gemini Web 测试图片生成"})
-		result, err := client.GenerateImage(c.Request.Context(), prompt)
+		result, err := s.generateGeminiWebImageWithProgress(c, client, prompt)
 		if err != nil {
 			return s.sendErrorAndEnd(c, err.Error())
 		}
-		imageURL := ""
-		if result != nil {
-			imageURL = firstNonEmptyString(result.ImageURL, result.ImageID)
+		if err := s.sendGeminiWebImageTestResult(c, account, modelID, result, client); err != nil {
+			return err
 		}
-		if imageURL == "" {
-			return s.sendErrorAndEnd(c, "No image URL returned from Gemini Web")
-		}
-		if result == nil || strings.TrimSpace(result.ImageURL) == "" {
-			return s.sendErrorAndEnd(c, "Gemini Web image did not return a downloadable image URL")
-		}
-		previewURL, mimeType, err := client.fetchGeminiImageDataURL(c.Request.Context(), result.ImageURL)
-		if err != nil || previewURL == "" {
-			return s.sendErrorAndEnd(c, "Gemini Web image URL was generated but could not be downloaded by the backend")
-		}
-		if mimeType == "" {
-			mimeType = "image/png"
-		}
-		result.ImageURL = previewURL
-		s.sendEvent(c, TestEvent{Type: "content", Text: geminiWebResultContentJSON(result, "image") + "\n"})
-		s.sendEvent(c, TestEvent{
-			Type:     "image",
-			ImageURL: previewURL,
-			MimeType: mimeType,
-		})
 	} else if geminiWebIsVideoRequest(modelID) {
 		s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 Gemini Web 生成视频，可能需要数分钟"})
 		result, err := client.GenerateVideo(c.Request.Context(), prompt)
@@ -1013,6 +992,76 @@ func (s *AccountTestService) testGeminiWebAccountConnection(c *gin.Context, acco
 
 	s.sendEvent(c, TestEvent{Type: "status", Text: "Gemini Web Cookie 验证成功"})
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
+}
+
+type geminiWebImageTestResult struct {
+	result *geminiWebGenerateResult
+	err    error
+}
+
+func (s *AccountTestService) generateGeminiWebImageWithProgress(c *gin.Context, client *geminiWebOfficialClient, prompt string) (*geminiWebGenerateResult, error) {
+	ctx := c.Request.Context()
+	resultCh := make(chan geminiWebImageTestResult, 1)
+	go func() {
+		result, err := client.GenerateImage(ctx, prompt)
+		resultCh <- geminiWebImageTestResult{result: result, err: err}
+	}()
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case result := <-resultCh:
+			return result.result, result.err
+		case <-ticker.C:
+			s.sendEvent(c, TestEvent{Type: "status", Text: "Gemini Web 图片生成中，请稍候..."})
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+func (s *AccountTestService) sendGeminiWebImageTestResult(c *gin.Context, account *Account, modelID string, result *geminiWebGenerateResult, client *geminiWebOfficialClient) error {
+	imageURL := ""
+	if result != nil {
+		imageURL = firstNonEmptyString(result.ImageURL, result.ImageID)
+	}
+	if imageURL == "" {
+		return s.sendErrorAndEnd(c, "No image URL returned from Gemini Web")
+	}
+	if result == nil || strings.TrimSpace(result.ImageURL) == "" {
+		return s.sendErrorAndEnd(c, "Gemini Web image did not return a downloadable image URL")
+	}
+
+	rawImageURL := strings.TrimSpace(result.ImageURL)
+	previewURL, mimeType, err := client.fetchGeminiImageDataURL(c.Request.Context(), rawImageURL)
+	if err != nil || previewURL == "" {
+		if err == nil {
+			err = errors.New("empty Gemini Web image preview")
+		}
+		accountID := int64(0)
+		if account != nil {
+			accountID = account.ID
+		}
+		log.Printf("Gemini Web image preview download failed: account_id=%d model=%s image_url=%s error=%s", accountID, modelID, truncateString(rawImageURL, 512), err.Error())
+		s.sendEvent(c, TestEvent{Type: "status", Text: "Gemini Web 图片已生成，但后端预览下载失败，已返回原始图片 URL"})
+		result.ImageURL = rawImageURL
+		s.sendEvent(c, TestEvent{Type: "content", Text: geminiWebResultContentJSON(result, "image") + "\n"})
+		s.sendEvent(c, TestEvent{Type: "image", ImageURL: rawImageURL})
+		return nil
+	}
+
+	if mimeType == "" {
+		mimeType = "image/png"
+	}
+	result.ImageURL = previewURL
+	s.sendEvent(c, TestEvent{Type: "content", Text: geminiWebResultContentJSON(result, "image") + "\n"})
+	s.sendEvent(c, TestEvent{
+		Type:     "image",
+		ImageURL: previewURL,
+		MimeType: mimeType,
+	})
 	return nil
 }
 
