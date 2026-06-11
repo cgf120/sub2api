@@ -112,9 +112,34 @@ func TestUpdateUserPlatformQuotas_Success(t *testing.T) {
 	if repo.upsertCalls[0].userID != 42 || len(repo.upsertCalls[0].records) != 2 {
 		t.Errorf("unexpected upsert call: %+v", repo.upsertCalls[0])
 	}
-	// 缓存失效：请求中 2 个 platform + 软删除的 2 个 platform（gemini, antigravity）= 4 次
-	if len(cache.deleteCalls) != 4 {
-		t.Errorf("expected 4 cache delete calls, got %d: %+v", len(cache.deleteCalls), cache.deleteCalls)
+	// 缓存失效：请求中 2 个 platform + 软删除的 3 个 platform（gemini, antigravity, grok）= 5 次
+	expectedPlatforms := map[string]bool{
+		"anthropic":   true,
+		"openai":      true,
+		"gemini":      true,
+		"antigravity": true,
+		"grok":        true,
+	}
+	if len(cache.deleteCalls) != len(expectedPlatforms) {
+		t.Fatalf("expected %d cache delete calls, got %d: %+v", len(expectedPlatforms), len(cache.deleteCalls), cache.deleteCalls)
+	}
+	seenPlatforms := map[string]bool{}
+	for _, call := range cache.deleteCalls {
+		if call.userID != 42 {
+			t.Errorf("expected cache delete for user 42, got %d", call.userID)
+		}
+		if !expectedPlatforms[call.platform] {
+			t.Errorf("unexpected cache delete platform %q", call.platform)
+		}
+		if seenPlatforms[call.platform] {
+			t.Errorf("duplicate cache delete platform %q", call.platform)
+		}
+		seenPlatforms[call.platform] = true
+	}
+	for platform := range expectedPlatforms {
+		if !seenPlatforms[platform] {
+			t.Errorf("missing cache delete platform %q", platform)
+		}
 	}
 }
 
