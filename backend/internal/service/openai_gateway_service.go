@@ -3715,6 +3715,84 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	return true
 }
 
+func classifyOpenAIStreamFailedAccountError(payload []byte, message string) (int, []byte, bool) {
+	message = sanitizeUpstreamErrorMessage(strings.TrimSpace(message))
+	errCode := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "response.error.code").String()))
+	if errCode == "" {
+		errCode = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "error.code").String()))
+	}
+	errType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "response.error.type").String()))
+	if errType == "" {
+		errType = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "error.type").String()))
+	}
+	combined := strings.ToLower(strings.TrimSpace(message + " " + errCode + " " + errType))
+	if combined == "" {
+		return 0, nil, false
+	}
+
+	errorType := errType
+	if errorType == "" {
+		errorType = errCode
+	}
+	if errorType == "" {
+		errorType = "upstream_error"
+	}
+	errorCode := errCode
+	if errorCode == "" {
+		errorCode = errorType
+	}
+	if message == "" {
+		message = "OpenAI stream failed"
+	}
+
+	errorObj := map[string]any{
+		"message": message,
+		"type":    errorType,
+		"code":    errorCode,
+	}
+	for _, key := range []string{"resets_at", "resets_in_seconds", "plan_type"} {
+		if value := gjson.GetBytes(payload, "response.error."+key); value.Exists() {
+			errorObj[key] = value.Value()
+			continue
+		}
+		if value := gjson.GetBytes(payload, "error."+key); value.Exists() {
+			errorObj[key] = value.Value()
+		}
+	}
+	body, _ := json.Marshal(map[string]any{"error": errorObj})
+
+	if strings.Contains(combined, "insufficient_quota") ||
+		strings.Contains(combined, "exceeded your current quota") ||
+		strings.Contains(combined, "check your plan and billing") {
+		return http.StatusPaymentRequired, body, true
+	}
+
+	if strings.Contains(combined, "usage_limit_reached") ||
+		strings.Contains(combined, "rate_limit_exceeded") ||
+		strings.Contains(combined, "usage limit") ||
+		strings.Contains(combined, "rate limit") ||
+		strings.Contains(combined, "too many requests") {
+		return http.StatusTooManyRequests, body, true
+	}
+
+	return 0, nil, false
+}
+
+func (s *OpenAIGatewayService) handleOpenAIStreamFailedAccountError(ctx context.Context, account *Account, payload []byte, message string, requestedModel string) {
+	if s == nil || s.rateLimitService == nil || account == nil {
+		return
+	}
+	statusCode, body, ok := classifyOpenAIStreamFailedAccountError(payload, message)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(requestedModel) != "" {
+		s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, http.Header{}, body, requestedModel)
+		return
+	}
+	s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, http.Header{}, body)
+}
+
 func (s *OpenAIGatewayService) newOpenAIStreamFailoverError(
 	c *gin.Context,
 	account *Account,
@@ -3852,6 +3930,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			eventType := strings.TrimSpace(gjson.Get(trimmedData, "type").String())
 			if eventType == "response.failed" {
 				failedMessage = extractOpenAISSEErrorMessage(dataBytes)
+				s.handleOpenAIStreamFailedAccountError(ctx, account, dataBytes, failedMessage, originalModel)
 				if !openAIStreamClientOutputStarted(c, clientOutputStarted) && openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
 					return resultWithUsage(),
 						s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, dataBytes, failedMessage)
@@ -4744,6 +4823,7 @@ func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp
 			forceFlushFailedEvent := false
 			if eventType == "response.failed" {
 				failedMessage = extractOpenAISSEErrorMessage(dataBytes)
+				s.handleOpenAIStreamFailedAccountError(ctx, account, dataBytes, failedMessage, originalModel)
 				if !openAIStreamClientOutputStarted(c, clientOutputStarted) && openAIStreamFailedEventShouldFailover(dataBytes, failedMessage) {
 					sawFailedEvent = true
 					streamFailoverErr = s.newOpenAIStreamFailoverError(c, account, false, upstreamRequestID, dataBytes, failedMessage)
